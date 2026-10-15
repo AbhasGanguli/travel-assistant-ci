@@ -1,0 +1,252 @@
+name: Manual Firebase Test Lab Robo smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character commit SHA from the private travel-assistant repository
+        required: true
+        type: string
+      nonproduction_confirmation:
+        description: Type I_CONFIRM_NON_PRODUCTION_FIREBASE_TEST to permit this run
+        required: true
+        type: string
+      device_model:
+        description: Device model ID from gcloud firebase test android models list
+        required: true
+        type: string
+        default: Pixel8
+      android_version:
+        description: Android version ID supported for the selected model
+        required: true
+        type: string
+        default: "35"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: firebase-test-lab-robo
+  cancel-in-progress: true
+
+jobs:
+  robo_smoke:
+    name: Build and run isolated Robo smoke test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out CI controller
+        uses: actions/checkout@v7
+        with:
+          path: control
+          persist-credentials: false
+
+      - name: Validate explicit approval, source SHA and required secrets
+        id: input_check
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CONFIRMATION: ${{ inputs.nonproduction_confirmation }}
+          DEVICE_MODEL: ${{ inputs.device_model }}
+          ANDROID_VERSION: ${{ inputs.android_version }}
+          PRIVATE_REPO_READ_TOKEN: ${{ secrets.PRIVATE_REPO_READ_TOKEN }}
+          FTL_NONPRODUCTION_PROJECT_ID: ${{ secrets.FTL_NONPRODUCTION_PROJECT_ID }}
+          FTL_GOOGLE_SERVICES_JSON_B64: ${{ secrets.FTL_GOOGLE_SERVICES_JSON_B64 }}
+          FTL_APP_CHECK_DEBUG_TOKEN: ${{ secrets.FTL_APP_CHECK_DEBUG_TOKEN }}
+          FTL_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.FTL_WORKLOAD_IDENTITY_PROVIDER }}
+          FTL_SERVICE_ACCOUNT: ${{ secrets.FTL_SERVICE_ACCOUNT }}
+          FTL_RESULTS_BUCKET: ${{ secrets.FTL_RESULTS_BUCKET }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Dispatch this workflow from the controller main branch only."
+            exit 1
+          fi
+          if [[ "$CONFIRMATION" != "I_CONFIRM_NON_PRODUCTION_FIREBASE_TEST" ]]; then
+            echo "::error::The non-production confirmation phrase did not match."
+            exit 1
+          fi
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::source_sha must be one full 40-character private commit SHA."
+            exit 1
+          fi
+          if [[ ! "$DEVICE_MODEL" =~ ^[A-Za-z0-9._-]+$ || ! "$ANDROID_VERSION" =~ ^[0-9]+$ ]]; then
+            echo "::error::The device model/version values contain unsupported characters."
+            exit 1
+          fi
+          for name in PRIVATE_REPO_READ_TOKEN FTL_NONPRODUCTION_PROJECT_ID FTL_GOOGLE_SERVICES_JSON_B64 FTL_APP_CHECK_DEBUG_TOKEN FTL_WORKLOAD_IDENTITY_PROVIDER FTL_SERVICE_ACCOUNT FTL_RESULTS_BUCKET; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::A required Test Lab secret is missing: $name."
+              exit 1
+            fi
+          done
+          if [[ "$FTL_RESULTS_BUCKET" != gs://* ]]; then
+            echo "::error::FTL_RESULTS_BUCKET must begin with gs://."
+            exit 1
+          fi
+          echo "source_sha=${SOURCE_SHA,,}" >> "$GITHUB_OUTPUT"
+          echo "device_model=$DEVICE_MODEL" >> "$GITHUB_OUTPUT"
+          echo "android_version=$ANDROID_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Input validation: PASS (exact SHA, explicit non-production confirmation, configured secrets)."
+
+      - name: Check out exact private app source
+        uses: actions/checkout@v7
+        with:
+          repository: AbhasGanguli/travel-assistant
+          ref: ${{ steps.input_check.outputs.source_sha }}
+          token: ${{ secrets.PRIVATE_REPO_READ_TOKEN }}
+          path: source
+          persist-credentials: false
+
+      - name: Configure non-production Firebase resources
+        shell: bash
+        env:
+          FTL_NONPRODUCTION_PROJECT_ID: ${{ secrets.FTL_NONPRODUCTION_PROJECT_ID }}
+          FTL_GOOGLE_SERVICES_JSON_B64: ${{ secrets.FTL_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          set -euo pipefail
+          python3 - source/app/google-services.json <<'PY'
+          import base64, json, os, pathlib, sys
+          output = pathlib.Path(sys.argv[1])
+          try:
+              raw = base64.b64decode(os.environ["FTL_GOOGLE_SERVICES_JSON_B64"], validate=True)
+              config = json.loads(raw)
+          except Exception:
+              print("::error::The FTL Google Services secret is not valid base64-encoded JSON.")
+              raise SystemExit(1)
+          configured_project = (config.get("project_info") or {}).get("project_id")
+          expected_project = os.environ["FTL_NONPRODUCTION_PROJECT_ID"]
+          if not expected_project or configured_project != expected_project:
+              print("::error::Google Services config project does not match FTL_NONPRODUCTION_PROJECT_ID.")
+              raise SystemExit(1)
+          clients = config.get("client") or []
+          if not any(
+              ((item.get("client_info") or {}).get("android_client_info") or {}).get("package_name")
+              == "com.travelassistant.app"
+              for item in clients
+          ):
+              print("::error::The Google Services config does not register com.travelassistant.app.")
+              raise SystemExit(1)
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(json.dumps(config), encoding="utf-8")
+          print("Non-production Firebase project/package config verified; config contents suppressed.")
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            source/**/*.gradle
+            source/**/*.gradle.kts
+            source/gradle/libs.versions.toml
+            source/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" > "$RUNNER_TEMP/sdkmanager.log" 2>&1
+          echo "Android SDK components: installed."
+
+      - name: Build debug APK for Test Lab only
+        id: build
+        shell: bash
+        working-directory: source
+        env:
+          FIREBASE_APP_CHECK_DEBUG_TOKEN: ${{ secrets.FTL_APP_CHECK_DEBUG_TOKEN }}
+        run: |
+          set +e
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --console=plain > "$RUNNER_TEMP/ftl-build.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            if [ ! -s app/build/outputs/apk/debug/app-debug.apk ]; then
+              echo "::error::Gradle exited successfully but the expected debug APK is missing."
+              exit 1
+            fi
+            echo "Debug APK built for the approved Test Lab run. It will not be uploaded as a GitHub artifact."
+          else
+            echo "::error::The debug APK build failed. Raw Gradle output is suppressed."
+          fi
+          exit "$code"
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.FTL_NONPRODUCTION_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.FTL_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.FTL_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          cleanup_credentials: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ secrets.FTL_NONPRODUCTION_PROJECT_ID }}
+
+      - name: Run one-device Firebase Test Lab Robo smoke test
+        id: test_lab
+        shell: bash
+        env:
+          FTL_NONPRODUCTION_PROJECT_ID: ${{ secrets.FTL_NONPRODUCTION_PROJECT_ID }}
+          FTL_RESULTS_BUCKET: ${{ secrets.FTL_RESULTS_BUCKET }}
+          DEVICE_MODEL: ${{ steps.input_check.outputs.device_model }}
+          ANDROID_VERSION: ${{ steps.input_check.outputs.android_version }}
+          SOURCE_SHA: ${{ steps.input_check.outputs.source_sha }}
+        working-directory: source
+        run: |
+          set +e
+          SHORT_SHA="${SOURCE_SHA:0:8}"
+          gcloud firebase test android run \
+            --type robo \
+            --app app/build/outputs/apk/debug/app-debug.apk \
+            --device "model=${DEVICE_MODEL},version=${ANDROID_VERSION},locale=en,orientation=portrait" \
+            --timeout 180s \
+            --results-bucket "${FTL_RESULTS_BUCKET}" \
+            --client-details "matrixLabel=TravelAssistant-Robo-${SHORT_SHA}" \
+            --project "${FTL_NONPRODUCTION_PROJECT_ID}" \
+            > "$RUNNER_TEMP/testlab.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          result_url="$(grep -Eo 'https://console\.firebase\.google\.com/project/[A-Za-z0-9_-]+/testlab/[A-Za-z0-9/?&=._-]+' "$RUNNER_TEMP/testlab.log" | head -n 1 || true)"
+          if [[ -n "$result_url" ]]; then
+            echo "Test Lab result link: $result_url"
+          else
+            echo "Test Lab result details are available in the configured non-production Firebase console."
+          fi
+          if [ "$code" -eq 0 ]; then
+            echo "Firebase Test Lab Robo command: PASS. Review device screenshots/video and issues in the result matrix."
+          else
+            echo "::error::Firebase Test Lab returned exit code $code. Detailed CLI output is withheld; inspect the restricted non-production Test Lab matrix."
+          fi
+          exit "$code"
+
+      - name: Final gate
+        if: always()
+        shell: bash
+        env:
+          BUILD_EXIT: ${{ steps.build.outputs.exit_code }}
+          TEST_LAB_EXIT: ${{ steps.test_lab.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${BUILD_EXIT:-1}" != "0" ]; then
+            echo "::error::Test Lab run did not reach the device test stage."
+            exit 1
+          fi
+          if [ "${TEST_LAB_EXIT:-1}" != "0" ]; then
+            echo "::error::The Firebase Test Lab Robo smoke test failed or could not be completed."
+            exit 1
+          fi
+          echo "Validation passed: exact private SHA built and executed on the selected non-production Test Lab device."
