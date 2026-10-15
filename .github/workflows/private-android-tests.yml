@@ -204,6 +204,8 @@ jobs:
                   print(f"Sanitized capability-ledger audit detail: {detail}")
               elif cls.endswith("LiveGeminiCapabilityEvaluationTest") and name == "classMethod":
                   print(f"Sanitized live-eval runner detail: {detail}")
+              elif cls.endswith("EnquirySubmissionWorkPersistenceTest") and name == "enqueuedUniqueRetrySurvivesWorkManagerDatabaseReopen":
+                  print(f"Sanitized WorkManager lifecycle assertion: {detail}")
           with open(output_path, "a") as out:
               out.write(f"total={total}\nfailures={failures}\nerrors={errors}\n")
           PY
