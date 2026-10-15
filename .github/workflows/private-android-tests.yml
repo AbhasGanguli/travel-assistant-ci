@@ -171,7 +171,7 @@ jobs:
             if [ "$install_code" -ne 0 ]; then
               echo "Rules test dependency installation failed."
               grep -E 'npm (ERR!|error) (code|errno|syscall) ' "$RUNNER_TEMP/firestore-rules-install.log" 2>/dev/null \
-                | sed -E 's#https?://[^ ]+#<url>#g; s#(token|password|authorization)[=:][^ ]+#\\1=<redacted>#Ig; s#/(home|root|tmp)/[^ ]+#<path>#g' \
+                | sed -E 's#https?://[^ ]+#<url>#g; s#(token|password|authorization)[=:][^ ]+#<redacted>#Ig; s#/(home|root|tmp)/[^ ]+#<path>#g' \
                 | cut -c1-160 | head -n 10 || true
             elif ! grep -qE '^not ok [0-9]+' "$RUNNER_TEMP/firestore-rules.log" 2>/dev/null; then
               echo "Firestore emulator or rules test setup failed before a test assertion."
