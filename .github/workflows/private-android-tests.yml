@@ -115,13 +115,13 @@ jobs:
         working-directory: source
         run: |
           set +e
-          python3 -m unittest scripts.test_seed_test_packages scripts.test_audit_meal_coverage_export > "$RUNNER_TEMP/seed-tests.log" 2>&1
+          python3 -m unittest scripts.test_seed_test_packages scripts.test_audit_meal_coverage_export scripts.test_export_firestore_meal_coverage > "$RUNNER_TEMP/seed-tests.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
-            echo "Offline package-data contracts: PASS"
+            echo "Offline package-data and read-only Firestore audit contracts: PASS"
           else
-            echo "::error::Offline package-data contract tests failed. Detailed output is suppressed."
+            echo "::error::Offline package-data or read-only Firestore audit tests failed. Detailed output is suppressed."
             grep -E '^(FAIL|ERROR):' "$RUNNER_TEMP/seed-tests.log" | sed -E 's/^(FAIL|ERROR): ([^ ]+).*/Failed offline data test: \2/' | head -n 10
             if ! grep -qE '^(FAIL|ERROR):' "$RUNNER_TEMP/seed-tests.log"; then
               echo "Python unit-test setup failed before naming a test."
