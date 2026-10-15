@@ -111,7 +111,7 @@ jobs:
         working-directory: source
         run: |
           set +e
-          ./gradlew :app:testDebugUnitTest --console=plain > "$RUNNER_TEMP/tests.log" 2>&1
+          ./gradlew :app:testDebugUnitTest --console=plain -x processDebugGoogleServices > "$RUNNER_TEMP/tests.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
@@ -177,6 +177,7 @@ jobs:
         env:
           COMPILE_EXIT: ${{ steps.compile.outputs.exit_code }}
           TEST_EXIT: ${{ steps.tests.outputs.exit_code }}
+          JUNIT_TOTAL: ${{ steps.junit_summary.outputs.total }}
           JUNIT_FAILURES: ${{ steps.junit_summary.outputs.failures }}
           JUNIT_ERRORS: ${{ steps.junit_summary.outputs.errors }}
           ROOM_OUTCOME: ${{ steps.room_schema.outcome }}
@@ -186,7 +187,7 @@ jobs:
             echo "::error::Validation failed at Kotlin compilation."
             exit 1
           fi
-          if [ "$TEST_EXIT" != "0" ] || [ "${JUNIT_FAILURES:-0}" != "0" ] || [ "${JUNIT_ERRORS:-0}" != "0" ]; then
+          if [ "$TEST_EXIT" != "0" ] || [ "${JUNIT_TOTAL:-0}" = "0" ] || [ "${JUNIT_FAILURES:-0}" != "0" ] || [ "${JUNIT_ERRORS:-0}" != "0" ]; then
             echo "::error::Validation failed at JVM unit tests."
             exit 1
           fi
