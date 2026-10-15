@@ -116,13 +116,13 @@ jobs:
         run: |
           set +e
           chmod +x ./gradlew
-          ./gradlew :app:compileDebugKotlin --console=plain > "$RUNNER_TEMP/compile.log" 2>&1
+          ./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin --console=plain > "$RUNNER_TEMP/compile.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
-            echo "Kotlin compilation: PASS"
+            echo "Kotlin main + unit-test compilation: PASS"
           else
-            echo "::error::Kotlin compilation failed. Raw build output is suppressed to avoid exposing private source in this public workflow."
+            echo "::error::Kotlin main or unit-test compilation failed. Raw build output is suppressed to avoid exposing private source in this public workflow."
             python3 - "$RUNNER_TEMP/compile.log" <<'PY'
           import re, sys
           for line in open(sys.argv[1], errors="replace"):
