@@ -198,6 +198,12 @@ jobs:
                   "assistantApplyThatCommitsFirstAllowsLaterUiMutationAgainstNewHead",
               }:
                   print(f"Assertion detail (fixture values only): {detail}")
+              elif cls.endswith("AssistantCapabilityAuditTest") and name == {
+                  "capabilityLedgerCoversEveryCorpusCaseWithExplicitStatus"
+              }:
+                  print(f"Sanitized capability-ledger audit detail: {detail}")
+              elif cls.endswith("LiveGeminiCapabilityEvaluationTest") and name == "classMethod":
+                  print(f"Sanitized live-eval runner detail: {detail}")
           with open(output_path, "a") as out:
               out.write(f"total={total}\nfailures={failures}\nerrors={errors}\n")
           PY
