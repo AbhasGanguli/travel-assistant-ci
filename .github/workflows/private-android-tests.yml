@@ -181,12 +181,23 @@ jobs:
                   errors += len(e)
                   if f or e:
                       kind = "failure" if f else "error"
-                      failed.append((case.get("classname", "unknown"), case.get("name", "unknown"), kind))
+                      detail = " ".join((f or e)[0].attrib.get("message", "").split())[:240]
+                      failed.append((case.get("classname", "unknown"), case.get("name", "unknown"), kind, detail))
           print(f"JUnit summary: total={total}, skipped={skipped}, failures={failures}, errors={errors}")
           if not files:
               print("No JUnit XML reports were generated.")
-          for cls, name, kind in failed[:30]:
+          for cls, name, kind, detail in failed[:30]:
               print(f"Failed test: {cls}.{name} [{kind}]")
+              # Only expose assertion summaries for known synthetic proposal-race fixtures;
+              # never print test body text, captured logs, or stack traces from the private source.
+              if cls.endswith("RoomAssistantSessionRuntimeTest") and name in {
+                  "failedSupersedeStatusWriteRollsBackDirectUiMutationAndActionRecord",
+                  "directUiMutationSupersedesOpenProposalAndRejectsStaleAssistantApply",
+                  "supersededApplyCannotCommitAfterRuntimeReopen",
+                  "directUiNoOpLeavesOpenProposalOpen",
+                  "assistantApplyThatCommitsFirstAllowsLaterUiMutationAgainstNewHead",
+              }:
+                  print(f"Assertion detail (fixture values only): {detail}")
           with open(output_path, "a") as out:
               out.write(f"total={total}\nfailures={failures}\nerrors={errors}\n")
           PY
