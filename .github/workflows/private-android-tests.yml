@@ -109,6 +109,26 @@ jobs:
           JSON
           echo "Temporary non-production Firebase resources configured for unit tests."
 
+      - name: Validate synthetic seed fixtures
+        id: seed_tests
+        shell: bash
+        working-directory: source
+        run: |
+          set +e
+          python3 -m unittest scripts.test_seed_test_packages > "$RUNNER_TEMP/seed-tests.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo "Synthetic Firestore seed fixtures: PASS"
+          else
+            echo "::error::Synthetic seed fixture tests failed. Detailed output is suppressed."
+            grep -E '^(FAIL|ERROR):' "$RUNNER_TEMP/seed-tests.log" | sed -E 's/^(FAIL|ERROR): ([^ ]+).*/Failed synthetic seed test: \2/' | head -n 10
+            if ! grep -qE '^(FAIL|ERROR):' "$RUNNER_TEMP/seed-tests.log"; then
+              echo "Python unit-test setup failed before naming a test."
+            fi
+          fi
+          exit 0
+
       - name: Compile Kotlin (safe diagnostics only)
         id: compile
         shell: bash
@@ -204,8 +224,6 @@ jobs:
                   print(f"Sanitized capability-ledger audit detail: {detail}")
               elif cls.endswith("LiveGeminiCapabilityEvaluationTest") and name == "classMethod":
                   print(f"Sanitized live-eval runner detail: {detail}")
-              elif cls.endswith("EnquirySubmissionWorkPersistenceTest") and name == "enqueuedUniqueRetrySurvivesWorkManagerDatabaseReopen":
-                  print(f"Sanitized WorkManager lifecycle assertion: {detail}")
           with open(output_path, "a") as out:
               out.write(f"total={total}\nfailures={failures}\nerrors={errors}\n")
           PY
@@ -229,6 +247,7 @@ jobs:
         if: always()
         shell: bash
         env:
+          SEED_TEST_EXIT: ${{ steps.seed_tests.outputs.exit_code }}
           COMPILE_EXIT: ${{ steps.compile.outputs.exit_code }}
           TEST_EXIT: ${{ steps.tests.outputs.exit_code }}
           JUNIT_TOTAL: ${{ steps.junit_summary.outputs.total }}
@@ -237,6 +256,10 @@ jobs:
           ROOM_OUTCOME: ${{ steps.room_schema.outcome }}
         run: |
           set -euo pipefail
+          if [ "$SEED_TEST_EXIT" != "0" ]; then
+            echo "::error::Validation failed at synthetic seed fixture tests."
+            exit 1
+          fi
           if [ "$COMPILE_EXIT" != "0" ]; then
             echo "::error::Validation failed at Kotlin compilation."
             exit 1
