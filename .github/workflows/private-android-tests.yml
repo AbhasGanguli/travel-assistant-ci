@@ -55,17 +55,11 @@ jobs:
         with:
           node-version: '20.19.0'
 
-      - name: Set up Java 17
+      - name: Set up Java 21 for Firestore rules emulator
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-          cache: gradle
-          cache-dependency-path: |
-            source/**/*.gradle
-            source/**/*.gradle.kts
-            source/gradle/libs.versions.toml
-            source/gradle/wrapper/gradle-wrapper.properties
+          java-version: '21'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -178,6 +172,18 @@ jobs:
             fi
           fi
           exit 0
+
+      - name: Restore Java 17 for Android Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            source/**/*.gradle
+            source/**/*.gradle.kts
+            source/gradle/libs.versions.toml
+            source/gradle/wrapper/gradle-wrapper.properties
 
       - name: Compile Kotlin (safe diagnostics only)
         id: compile
