@@ -50,6 +50,11 @@ jobs:
           path: source
           persist-credentials: false
 
+      - name: Set up Node.js for Firestore rules tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -134,6 +139,39 @@ jobs:
             grep -E '^(FAIL|ERROR):' "$RUNNER_TEMP/seed-tests.log" | sed -E 's/^(FAIL|ERROR): ([^ ]+).*/Failed offline data test: \2/' | head -n 10
             if ! grep -qE '^(FAIL|ERROR):' "$RUNNER_TEMP/seed-tests.log"; then
               echo "Python unit-test setup failed before naming a test."
+            fi
+          fi
+          exit 0
+
+      - name: Firestore security rules emulator tests
+        id: rules_test
+        shell: bash
+        working-directory: source
+        run: |
+          set +e
+          npm --prefix scripts/firestore-rules-tests install --no-audit --no-fund > "$RUNNER_TEMP/firestore-rules-install.log" 2>&1
+          install_code=$?
+          if [ "$install_code" -eq 0 ]; then
+            npx --yes firebase-tools@15.30.2 emulators:exec \
+              --only firestore \
+              --project demo-travel-assistant-rules \
+              --config firebase.rules-test.json \
+              "npm --prefix scripts/firestore-rules-tests test" \
+              > "$RUNNER_TEMP/firestore-rules.log" 2>&1
+            code=$?
+          else
+            code=$install_code
+          fi
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo "Firestore security rules emulator tests: PASS"
+          else
+            echo "::error::Firestore security rules emulator tests failed. Detailed logs are suppressed."
+            grep -E '^not ok [0-9]+' "$RUNNER_TEMP/firestore-rules.log" 2>/dev/null | head -n 10 || true
+            if [ "$install_code" -ne 0 ]; then
+              echo "Rules test dependency installation failed."
+            elif ! grep -qE '^not ok [0-9]+' "$RUNNER_TEMP/firestore-rules.log" 2>/dev/null; then
+              echo "Firestore emulator or rules test setup failed before a test assertion."
             fi
           fi
           exit 0
@@ -257,6 +295,7 @@ jobs:
         shell: bash
         env:
           SEED_TEST_EXIT: ${{ steps.seed_tests.outputs.exit_code }}
+          RULES_TEST_EXIT: ${{ steps.rules_test.outputs.exit_code }}
           COMPILE_EXIT: ${{ steps.compile.outputs.exit_code }}
           TEST_EXIT: ${{ steps.tests.outputs.exit_code }}
           JUNIT_TOTAL: ${{ steps.junit_summary.outputs.total }}
@@ -267,6 +306,10 @@ jobs:
           set -euo pipefail
           if [ "$SEED_TEST_EXIT" != "0" ]; then
             echo "::error::Validation failed at synthetic seed fixture tests."
+            exit 1
+          fi
+          if [ "$RULES_TEST_EXIT" != "0" ]; then
+            echo "::error::Validation failed at Firestore security rules emulator tests."
             exit 1
           fi
           if [ "$COMPILE_EXIT" != "0" ]; then
