@@ -1,0 +1,197 @@
+name: Validate private Android source
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'requested-source.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-android-validation
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Compile, unit tests, Room schema
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out CI controller
+        uses: actions/checkout@v4
+        with:
+          path: control
+          persist-credentials: false
+
+      - name: Read requested private commit
+        id: source_ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(tr -d '[:space:]' < control/requested-source.txt)"
+          if [[ ! "$source_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::requested-source.txt must contain one full 40-character commit SHA."
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Validating private source commit: $source_sha"
+
+      - name: Check out private application source
+        uses: actions/checkout@v4
+        with:
+          repository: AbhasGanguli/travel-assistant
+          ref: ${{ steps.source_ref.outputs.sha }}
+          token: ${{ secrets.PRIVATE_REPO_READ_TOKEN }}
+          path: source
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            source/**/*.gradle
+            source/**/*.gradle.kts
+            source/gradle/libs.versions.toml
+            source/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" > "$RUNNER_TEMP/sdkmanager.log" 2>&1
+          echo "Android SDK components: installed"
+
+      - name: Compile Kotlin (safe diagnostics only)
+        id: compile
+        shell: bash
+        working-directory: source
+        run: |
+          set +e
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin --console=plain -x processDebugGoogleServices > "$RUNNER_TEMP/compile.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo "Kotlin compilation: PASS"
+          else
+            echo "::error::Kotlin compilation failed. Raw build output is suppressed to avoid exposing private source in this public workflow."
+            python3 - "$RUNNER_TEMP/compile.log" <<'PY'
+          import re, sys
+          for line in open(sys.argv[1], errors="replace"):
+              line = line.rstrip()
+              if line.startswith("e: file://"):
+                  match = re.match(r"e: file://.*/([^/:]+):(\d+):(\d+):?\s*(.*)", line)
+                  if match:
+                      filename, row, col, message = match.groups()
+                      message = re.sub(r"file://\S+", "<source>", message)
+                      print(f"Compiler diagnostic: {filename}:{row}:{col} ({message[:180]})")
+              elif line.startswith("FAILURE: Build failed"):
+                  print("Gradle reported a build failure.")
+          PY
+          fi
+          exit 0
+
+      - name: Run JVM unit tests
+        id: tests
+        if: steps.compile.outputs.exit_code == '0'
+        shell: bash
+        working-directory: source
+        run: |
+          set +e
+          ./gradlew :app:testDebugUnitTest --console=plain > "$RUNNER_TEMP/tests.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo "Gradle unit tests: PASS"
+          else
+            echo "::error::Gradle unit tests failed. Full assertion messages and stack traces are intentionally suppressed."
+          fi
+          exit 0
+
+      - name: Summarize JUnit results without assertions or stack traces
+        id: junit_summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - source/app/build/test-results/testDebugUnitTest "$GITHUB_OUTPUT" <<'PY'
+          import glob, os, sys, xml.etree.ElementTree as ET
+          root_dir, output_path = sys.argv[1], sys.argv[2]
+          files = glob.glob(os.path.join(root_dir, "**", "*.xml"), recursive=True)
+          total = skipped = failures = errors = 0
+          failed = []
+          for filename in files:
+              try:
+                  root = ET.parse(filename).getroot()
+              except (ET.ParseError, OSError):
+                  continue
+              for case in root.iter("testcase"):
+                  total += 1
+                  skipped += len(case.findall("skipped"))
+                  f = case.findall("failure")
+                  e = case.findall("error")
+                  failures += len(f)
+                  errors += len(e)
+                  if f or e:
+                      kind = "failure" if f else "error"
+                      failed.append((case.get("classname", "unknown"), case.get("name", "unknown"), kind))
+          print(f"JUnit summary: total={total}, skipped={skipped}, failures={failures}, errors={errors}")
+          if not files:
+              print("No JUnit XML reports were generated.")
+          for cls, name, kind in failed[:30]:
+              print(f"Failed test: {cls}.{name} [{kind}]")
+          with open(output_path, "a") as out:
+              out.write(f"total={total}\nfailures={failures}\nerrors={errors}\n")
+          PY
+
+      - name: Verify checked-in Room schemas
+        id: room_schema
+        if: steps.compile.outputs.exit_code == '0'
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git add -N app/schemas
+          if git diff --quiet -- app/schemas; then
+            echo "Room schema guard: PASS"
+          else
+            echo "::error::Room schema drift detected. Diff content is suppressed in public logs."
+            exit 1
+          fi
+
+      - name: Final validation gate
+        if: always()
+        shell: bash
+        env:
+          COMPILE_EXIT: ${{ steps.compile.outputs.exit_code }}
+          TEST_EXIT: ${{ steps.tests.outputs.exit_code }}
+          JUNIT_FAILURES: ${{ steps.junit_summary.outputs.failures }}
+          JUNIT_ERRORS: ${{ steps.junit_summary.outputs.errors }}
+          ROOM_OUTCOME: ${{ steps.room_schema.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPILE_EXIT" != "0" ]; then
+            echo "::error::Validation failed at Kotlin compilation."
+            exit 1
+          fi
+          if [ "$TEST_EXIT" != "0" ] || [ "${JUNIT_FAILURES:-0}" != "0" ] || [ "${JUNIT_ERRORS:-0}" != "0" ]; then
+            echo "::error::Validation failed at JVM unit tests."
+            exit 1
+          fi
+          if [ "$ROOM_OUTCOME" != "success" ]; then
+            echo "::error::Validation failed at the Room schema guard."
+            exit 1
+          fi
+          echo "Validation gate: PASS (Kotlin compile, unit tests, Room schema)"
