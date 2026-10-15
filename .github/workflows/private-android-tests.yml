@@ -74,6 +74,41 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0" > "$RUNNER_TEMP/sdkmanager.log" 2>&1
           echo "Android SDK components: installed"
 
+      - name: Prepare non-production Firebase config for JVM tests
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          # Unit tests need Google Services-generated resources, not a live Firebase project.
+          # This placeholder is temporary, contains no production credentials, and is never uploaded.
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "123456789012",
+              "project_id": "travel-assistant-ci-placeholder",
+              "storage_bucket": "travel-assistant-ci-placeholder.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789012:android:0000000000000000",
+                  "android_client_info": {
+                    "package_name": "com.travelassistant.app"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyDUMMY-PLACEHOLDER-NOT-A-REAL-KEY"
+                  }
+                ],
+                "services": {}
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+          echo "Temporary non-production Firebase resources configured for unit tests."
+
       - name: Compile Kotlin (safe diagnostics only)
         id: compile
         shell: bash
@@ -81,7 +116,7 @@ jobs:
         run: |
           set +e
           chmod +x ./gradlew
-          ./gradlew :app:compileDebugKotlin --console=plain -x processDebugGoogleServices > "$RUNNER_TEMP/compile.log" 2>&1
+          ./gradlew :app:compileDebugKotlin --console=plain > "$RUNNER_TEMP/compile.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
@@ -111,7 +146,7 @@ jobs:
         working-directory: source
         run: |
           set +e
-          ./gradlew :app:testDebugUnitTest --console=plain -x processDebugGoogleServices > "$RUNNER_TEMP/tests.log" 2>&1
+          ./gradlew :app:testDebugUnitTest --console=plain > "$RUNNER_TEMP/tests.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
