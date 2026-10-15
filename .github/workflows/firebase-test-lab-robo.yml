@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       nonproduction_confirmation:
-        description: Type I_CONFIRM_NON_PRODUCTION_FIREBASE_TEST to permit this run
+        description: Type I_CONFIRM_NON_PRODUCTION_FIREBASE_AND_POSSIBLE_AI_API_USAGE to confirm this isolated project may receive test reads/actions and possible model requests
         required: true
         type: string
       device_model:
