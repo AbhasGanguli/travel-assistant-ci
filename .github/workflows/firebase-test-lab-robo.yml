@@ -65,7 +65,7 @@ jobs:
             echo "::error::Dispatch this workflow from the controller main branch only."
             exit 1
           fi
-          if [[ "$CONFIRMATION" != "I_CONFIRM_NON_PRODUCTION_FIREBASE_TEST" ]]; then
+          if [[ "$CONFIRMATION" != "I_CONFIRM_NON_PRODUCTION_FIREBASE_AND_POSSIBLE_AI_API_USAGE" ]]; then
             echo "::error::The non-production confirmation phrase did not match."
             exit 1
           fi
