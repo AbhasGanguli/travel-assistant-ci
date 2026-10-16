@@ -274,7 +274,23 @@ jobs:
                   "assistantApplyThatCommitsFirstAllowsLaterUiMutationAgainstNewHead",
               }:
                   print(f"Assertion detail (fixture values only): {detail}")
-              elif cls.endswith("AssistantCapabilityAuditTest") and name == {
+              elif cls.endswith("GeminiInterpreterTransportTest") and name in {
+                  "unresolvedSemanticRemainderDoesNotTriggerAutomaticRepair",
+                  "typedCriterionFailuresProduceIndexedStructuredParserIssues",
+                  "parserPathsCarryBothActAndCriterionIndexes",
+                  "parserReportsNonZeroActIndexForCriterionFailure",
+                  "promptDefinesClosedTransportVocabularyAndExplicitDiscoverySelectionRule",
+                  "malformedTypedChangeIsRejectedAtParseBoundaryWithIndexedPath",
+                  "malformedCriterionValuesRemainTypedAndPathCarrying",
+                  "infrastructureFailureUsesSecondaryModelWithOriginalPromptUnchanged",
+                  "actualInterpreterRetriesTypedFailureOnceWithOriginalPromptAndNoOutputEcho",
+              }:
+                  print(f"Sanitized semantic-repair fixture detail: {detail}")
+              elif cls.endswith("CanonicalSemanticSessionPlannerTest") and name == "combinedSwitchClarifiesDaysInsteadOfSilentlyConvertingToNights":
+                  print(f"Sanitized duration-contract detail: {detail}")
+              elif cls.endswith("HomeAssistantLanguageTest") and name == "lowBudgetRankingUsesExplicitAdultCountFromHomeSession":
+                  print(f"Sanitized Home-session fixture detail: {detail}")
+              elif cls.endswith("AssistantCapabilityAuditTest") and name in {
                   "capabilityLedgerCoversEveryCorpusCaseWithExplicitStatus"
               }:
                   print(f"Sanitized capability-ledger audit detail: {detail}")
