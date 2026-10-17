@@ -274,6 +274,10 @@ jobs:
                   "assistantApplyThatCommitsFirstAllowsLaterUiMutationAgainstNewHead",
               }:
                   print(f"Assertion detail (fixture values only): {detail}")
+              elif cls.endswith("RoomAssistantSessionRuntimeTest") and name == "canonicalRoomRuntimeCombinesOrdinalPackageSelectionAndDurationAsOneAtomicProposal":
+                  print(f"Sanitized combined-duration fixture detail: {detail}")
+              elif cls.endswith("CanonicalSemanticSessionPlannerTest") and name == "combinedSwitchHandlesSameActMobilityAndPreservesFdProvenanceWithoutWireValue":
+                  print(f"Sanitized combined-mobility fixture detail: {detail}")
               elif cls.endswith("GeminiInterpreterTransportTest") and name in {
                   "unresolvedSemanticRemainderDoesNotTriggerAutomaticRepair",
                   "typedCriterionFailuresProduceIndexedStructuredParserIssues",
