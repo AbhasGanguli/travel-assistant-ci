@@ -50,13 +50,18 @@ jobs:
           path: source
           persist-credentials: false
 
-      - name: Validate live-evaluation runner shell syntax
+      - name: Validate live-evaluation runner shell syntax when present
         shell: bash
         working-directory: source
         run: |
           set -euo pipefail
-          bash -n scripts/run-live-gemini-eval.sh
-          echo "Live-evaluation runner shell syntax: PASS"
+          runner="scripts/run-live-gemini-eval.sh"
+          if [ -f "$runner" ]; then
+            bash -n "$runner"
+            echo "Live-evaluation runner shell syntax: PASS"
+          else
+            echo "No standalone live-evaluation shell runner in this source revision; syntax check skipped."
+          fi
 
       - name: Set up Node.js for Firestore rules tests
         uses: actions/setup-node@v4
