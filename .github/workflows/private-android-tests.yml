@@ -303,8 +303,8 @@ jobs:
                   "actualInterpreterRetriesTypedFailureOnceWithOriginalPromptAndNoOutputEcho",
               }:
                   print(f"Sanitized semantic-repair fixture detail: {detail}")
-              elif cls.endswith("CanonicalSemanticSessionPlannerTest") and name == "combinedSwitchClarifiesDaysInsteadOfSilentlyConvertingToNights":
-                  print(f"Sanitized duration-contract detail: {detail}")
+              elif cls.endswith("CanonicalSemanticSessionPlannerTest") and name == "combinedSwitchConvertsFiveDaysToFourNightsUsingProductRule":
+                  print(f"Sanitized five-days-to-four-nights fixture detail: {detail}")
               elif cls.endswith("HomeAssistantLanguageTest") and name == "lowBudgetRankingUsesExplicitAdultCountFromHomeSession":
                   print(f"Sanitized Home-session fixture detail: {detail}")
               elif cls.endswith("AssistantCapabilityAuditTest") and name in {
