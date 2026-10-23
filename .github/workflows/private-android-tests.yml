@@ -302,6 +302,7 @@ jobs:
                   "malformedDurationCriterionBecomesStructuredRepairableParseIssue",
                   "malformedNumericChangeBecomesStructuredRepairableParseIssue",
                   "structuredParseIssueMetadataSurvivesOnlyForKnownCodesAndStaticPaths",
+                  "parseFieldAndContractMetadataUseClosedAllowlistedLabels",
                   "infrastructureFailureUsesSecondaryModelWithOriginalPromptUnchanged",
                   "actualInterpreterRetriesTypedFailureOnceWithOriginalPromptAndNoOutputEcho",
               }:
