@@ -300,6 +300,7 @@ jobs:
                   "malformedTypedChangeIsRejectedAtParseBoundaryWithIndexedPath",
                   "malformedCriterionValuesRemainTypedAndPathCarrying",
                   "malformedDurationCriterionBecomesStructuredRepairableParseIssue",
+                  "humanReadableDurationAliasesNormalizeOnlyWithExplicitNumericCountAndUnit",
                   "malformedNumericChangeBecomesStructuredRepairableParseIssue",
                   "structuredParseIssueMetadataSurvivesOnlyForKnownCodesAndStaticPaths",
                   "parseFieldAndContractMetadataUseClosedAllowlistedLabels",
