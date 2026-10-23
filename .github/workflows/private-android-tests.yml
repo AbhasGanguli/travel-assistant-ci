@@ -299,6 +299,8 @@ jobs:
                   "promptDefinesClosedTransportVocabularyAndExplicitDiscoverySelectionRule",
                   "malformedTypedChangeIsRejectedAtParseBoundaryWithIndexedPath",
                   "malformedCriterionValuesRemainTypedAndPathCarrying",
+                  "malformedDurationCriterionBecomesStructuredRepairableParseIssue",
+                  "malformedNumericChangeBecomesStructuredRepairableParseIssue",
                   "infrastructureFailureUsesSecondaryModelWithOriginalPromptUnchanged",
                   "actualInterpreterRetriesTypedFailureOnceWithOriginalPromptAndNoOutputEcho",
               }:
