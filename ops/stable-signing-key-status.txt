@@ -1,0 +1,5 @@
+status=READY
+private_release=ci-debug-signing-key-v1
+certificate_sha256=4c6a7295715149b27ddea0ebbe10e37b4115523a4e814d34cfad1e55f36662d4
+key_material_location=private app-repository release only
+verified_at_utc=2026-10-26T09:35:45Z
