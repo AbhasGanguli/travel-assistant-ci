@@ -15,7 +15,7 @@ on:
       - "ops/CREATE_STABLE_SIGNING_KEY"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: initialize-stable-ci-debug-key
@@ -57,7 +57,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Check private release credentials and refuse key replacement
+      - name: Check private release credentials and detect the persistent key
+        id: release
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
         shell: bash
@@ -68,12 +69,25 @@ jobs:
             exit 1
           fi
           if gh release view ci-debug-signing-key-v1 --repo AbhasGanguli/travel-assistant >/dev/null 2>&1; then
-            echo "::error::Stable signing-key release already exists. Never regenerate or replace the key."
-            exit 1
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Stable key release exists; this run will validate it rather than replace it."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Stable key release is absent; this run may create it once."
           fi
-          echo "Private release credentials configured; no existing stable key found."
 
-      - name: Generate stable debug keystore once
+      - name: Restore existing private key assets
+        if: steps.release.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download ci-debug-signing-key-v1 --repo AbhasGanguli/travel-assistant --dir .
+          echo "Downloaded existing assets from the private key release."
+
+      - name: Generate the stable debug keystore once
+        if: steps.release.outputs.exists == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -95,7 +109,8 @@ jobs:
           echo "Created one new CI debug signing identity."
           echo "Certificate SHA-256: $fingerprint"
 
-      - name: Store key only as asset of a private app-repository release
+      - name: Store new key only in a private app-repository release
+        if: steps.release.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
         shell: bash
@@ -106,6 +121,55 @@ jobs:
             --repo AbhasGanguli/travel-assistant \
             --target main \
             --title "Stable CI debug signing key v1" \
-            --notes "Persistent CI debug signing identity for AbhasGanguli/travel-assistant. Private release asset; never delete, replace, or regenerate this key. CI APK builds must download this exact keystore and verify the APK signer certificate SHA-256 before publishing. Keystore alias androiddebugkey; store/key password android."
-          echo "Stable key stored in the private app repository release."
-          echo "Do not download, print, or upload this key to the public CI repository."
+            --notes "Persistent CI debug signing identity for AbhasGanguli/travel-assistant. Private release asset; never delete, replace, or regenerate this key. CI APK builds must download this exact keystore and verify the APK signer SHA-256 before publishing. Alias androiddebugkey; store/key password android."
+          echo "New stable signing key stored in the private app repository release."
+
+      - name: Validate persistent signing identity
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ci-debug.keystore
+          test -s ci-debug-cert.der
+          test -s ci-debug-cert.sha256
+          keytool -list -keystore ci-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+          keytool -exportcert -keystore ci-debug.keystore -storepass android -alias androiddebugkey -file "$RUNNER_TEMP/ci-debug-cert-verify.der" >/dev/null
+          if ! cmp -s ci-debug-cert.der "$RUNNER_TEMP/ci-debug-cert-verify.der"; then
+            echo "::error::Stored public certificate does not match the persistent keystore."
+            exit 1
+          fi
+          sha256sum --check ci-debug-cert.sha256 >/dev/null
+          fingerprint="$(sha256sum ci-debug-cert.der | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "Persistent signing key verified; certificate SHA-256: $fingerprint"
+
+      - name: Publish non-secret verification status to CI controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CERTIFICATE_SHA256: ${{ steps.signing.outputs.fingerprint }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status_file="$RUNNER_TEMP/stable-signing-key-status.txt"
+          {
+            echo "status=READY"
+            echo "private_release=ci-debug-signing-key-v1"
+            echo "certificate_sha256=$CERTIFICATE_SHA256"
+            echo "key_material_location=private app-repository release only"
+            echo "verified_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$status_file"
+
+          # Commit only public certificate metadata, never the private keystore.
+          git fetch origin main
+          git checkout -B status-update origin/main
+          cp "$status_file" ops/stable-signing-key-status.txt
+          git add ops/stable-signing-key-status.txt
+          if git diff --cached --quiet; then
+            echo "Verification status is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Record verified stable CI signing certificate"
+          git push origin HEAD:main
+          echo "Published fingerprint-only verification status; no private key bytes were committed."
