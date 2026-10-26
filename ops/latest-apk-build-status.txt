@@ -1,0 +1,8 @@
+status=FAILED
+source_sha=28dfe06c022595cd7bb2345c035d895f0204617f
+run_id=40301174766
+run_attempt=1
+signing_certificate_sha256=NOT_VERIFIED
+apk_sha256=NOT_AVAILABLE
+private_release_url=NONE
+completed_at_utc=2026-10-26T09:44:58Z
