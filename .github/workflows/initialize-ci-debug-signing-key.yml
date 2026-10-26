@@ -30,7 +30,7 @@ jobs:
       - name: Check out CI controller
         uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Require explicit one-time confirmation
         env:
