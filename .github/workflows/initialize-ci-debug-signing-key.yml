@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: ""
+  push:
+    branches:
+      - main
+    paths:
+      - "ops/CREATE_STABLE_SIGNING_KEY"
 
 permissions:
   contents: read
@@ -22,15 +27,28 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Check out CI controller
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Require explicit one-time confirmation
         env:
           CONFIRM_CREATE: ${{ inputs.confirm_create }}
+          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$CONFIRM_CREATE" != "CREATE" ]]; then
-            echo "::error::Set confirm_create to CREATE to proceed."
-            exit 1
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$CONFIRM_CREATE" != "CREATE" ]]; then
+              echo "::error::Set confirm_create to CREATE to proceed."
+              exit 1
+            fi
+          else
+            if [[ ! -f ops/CREATE_STABLE_SIGNING_KEY ]] || [[ "$(tr -d '[:space:]' < ops/CREATE_STABLE_SIGNING_KEY)" != "CREATE" ]]; then
+              echo "::error::The one-time key initialization signal is missing or invalid."
+              exit 1
+            fi
           fi
 
       - name: Set up Java 17
