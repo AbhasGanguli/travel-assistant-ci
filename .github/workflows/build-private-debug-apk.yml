@@ -1,6 +1,12 @@
 name: Build private debug APK
 
 on:
+  # Temporary diagnostic path: only a deliberate source-pin update builds an APK.
+  push:
+    branches:
+      - main
+    paths:
+      - "requested-source.txt"
   workflow_dispatch:
     inputs:
       source_sha:
@@ -36,6 +42,9 @@ jobs:
           REQUESTED_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          if [[ -z "$REQUESTED_SHA" ]]; then
+            REQUESTED_SHA="$(tr -d '[:space:]' < control/requested-source.txt)"
+          fi
           if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "::error::source_sha must be a full 40-character commit SHA."
             exit 1
@@ -130,6 +139,23 @@ jobs:
               raise SystemExit("Firebase config does not include com.travelassistant.app.")
           print("Non-production Firebase config validated.")
           PY
+
+      - name: Run JVM regression suite before packaging
+        working-directory: source
+        shell: bash
+        run: |
+          set +e
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --console=plain > "$RUNNER_TEMP/apk-unit-tests.log" 2>&1
+          code=$?
+          set -e
+          if [[ "$code" -eq 0 ]]; then
+            echo "JVM regression suite: PASS"
+          else
+            echo "::error::JVM regression suite failed; APK will not be published."
+            grep -E 'FAILED|tests completed|FAILURE: Build failed' "$RUNNER_TEMP/apk-unit-tests.log" | cut -c1-180 | head -n 20 || true
+            exit "$code"
+          fi
 
       - name: Assemble debug APK (suppress private build logs)
         id: assemble
