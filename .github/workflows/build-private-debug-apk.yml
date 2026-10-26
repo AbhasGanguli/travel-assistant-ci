@@ -57,6 +57,7 @@ jobs:
         env:
           PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
           NONPROD_GOOGLE_SERVICES_JSON: ${{ secrets.NONPROD_GOOGLE_SERVICES_JSON }}
+          TRAVEL_AGENT_DEBUG_TOKEN: ${{ secrets.TRAVEL_AGENT_DEBUG_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "$PRIVATE_RELEASE_TOKEN" ]]; then
@@ -67,7 +68,11 @@ jobs:
             echo "::error::Add repository secret NONPROD_GOOGLE_SERVICES_JSON containing the google-services.json for Firebase project travel-agent-9c305."
             exit 1
           fi
-          echo "Required build credentials are configured."
+          if [[ -z "$TRAVEL_AGENT_DEBUG_TOKEN" ]]; then
+            echo "::error::Add repository secret TRAVEL_AGENT_DEBUG_TOKEN using the fixed App Check debug token already registered for Firebase project travel-agent-9c305."
+            exit 1
+          fi
+          echo "Required build credentials are configured; token values are not printed."
 
       - name: Check out private application source
         uses: actions/checkout@v4
@@ -161,6 +166,8 @@ jobs:
         id: assemble
         working-directory: source
         shell: bash
+        env:
+          FIREBASE_APP_CHECK_DEBUG_TOKEN: ${{ secrets.TRAVEL_AGENT_DEBUG_TOKEN }}
         run: |
           set +e
           chmod +x ./gradlew
