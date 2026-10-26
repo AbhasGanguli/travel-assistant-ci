@@ -306,6 +306,8 @@ jobs:
                   "parseFieldAndContractMetadataUseClosedAllowlistedLabels",
                   "infrastructureFailureUsesSecondaryModelWithOriginalPromptUnchanged",
                   "actualInterpreterRetriesTypedFailureOnceWithOriginalPromptAndNoOutputEcho",
+                  "durationChangeUsingDatesFieldIsRejectedWithSpecificRepairGuidance",
+                  "packageFocusedWholeItineraryResponseDoesNotFailAsAmbiguousScope",
               }:
                   print(f"Sanitized semantic-repair fixture detail: {detail}")
               elif cls.endswith("CanonicalSemanticSessionPlannerTest") and name == "combinedSwitchConvertsFiveDaysToFourNightsUsingProductRule":
