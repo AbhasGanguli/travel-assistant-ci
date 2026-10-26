@@ -1,0 +1,93 @@
+name: Initialize stable private debug signing key
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_create:
+        description: "Type CREATE to generate the one-time key and store it only in the private app repository release"
+        required: true
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: initialize-stable-ci-debug-key
+  cancel-in-progress: false
+
+jobs:
+  initialize:
+    name: Create one persistent signing key
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require explicit one-time confirmation
+        env:
+          CONFIRM_CREATE: ${{ inputs.confirm_create }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRM_CREATE" != "CREATE" ]]; then
+            echo "::error::Set confirm_create to CREATE to proceed."
+            exit 1
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Check private release credentials and refuse key replacement
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::PRIVATE_REPO_RELEASE_TOKEN is required."
+            exit 1
+          fi
+          if gh release view ci-debug-signing-key-v1 --repo AbhasGanguli/travel-assistant >/dev/null 2>&1; then
+            echo "::error::Stable signing-key release already exists. Never regenerate or replace the key."
+            exit 1
+          fi
+          echo "Private release credentials configured; no existing stable key found."
+
+      - name: Generate stable debug keystore once
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -noprompt \
+            -keystore ci-debug.keystore \
+            -storetype JKS \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Travel Assistant CI Debug, OU=Development, O=Travel Assistant, L=Kolkata, ST=West Bengal, C=IN" \
+            >/dev/null 2>&1
+          keytool -list -keystore ci-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+          keytool -exportcert -keystore ci-debug.keystore -storepass android -alias androiddebugkey -file ci-debug-cert.der >/dev/null
+          fingerprint="$(sha256sum ci-debug-cert.der | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+          printf '%s  %s\n' "$fingerprint" "ci-debug-cert.der" > ci-debug-cert.sha256
+          echo "Created one new CI debug signing identity."
+          echo "Certificate SHA-256: $fingerprint"
+
+      - name: Store key only as asset of a private app-repository release
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create ci-debug-signing-key-v1 \
+            ci-debug.keystore ci-debug-cert.der ci-debug-cert.sha256 \
+            --repo AbhasGanguli/travel-assistant \
+            --target main \
+            --title "Stable CI debug signing key v1" \
+            --notes "Persistent CI debug signing identity for AbhasGanguli/travel-assistant. Private release asset; never delete, replace, or regenerate this key. CI APK builds must download this exact keystore and verify the APK signer certificate SHA-256 before publishing. Keystore alias androiddebugkey; store/key password android."
+          echo "Stable key stored in the private app repository release."
+          echo "Do not download, print, or upload this key to the public CI repository."
