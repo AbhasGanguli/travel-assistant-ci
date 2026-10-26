@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Full source commit SHA to build (defaults to the CI-validated itinerary-order commit)"
-        required: true
+        description: "Optional full source commit SHA; blank uses requested-source.txt"
+        required: false
         type: string
-        default: "b8415a5eb16d1af21a61c7fb695d96101592c647"
+        default: ""
 
 permissions:
   contents: read
@@ -90,6 +90,25 @@ jobs:
             exit 1
           fi
           echo "Source checkout verified: $actual_sha"
+
+      - name: Restore stable private CI signing key
+        id: signing
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download ci-debug-signing-key-v1 \
+            --repo AbhasGanguli/travel-assistant \
+            --pattern ci-debug.keystore \
+            --dir .
+          test -s ci-debug.keystore
+          keytool -list -keystore ci-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+          keytool -exportcert -keystore ci-debug.keystore -storepass android -alias androiddebugkey -file "$RUNNER_TEMP/ci-debug-cert.der" >/dev/null
+          fingerprint="$(sha256sum "$RUNNER_TEMP/ci-debug-cert.der" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "Stable keystore restored from private release; certificate SHA-256: $fingerprint"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -177,18 +196,34 @@ jobs:
             exit "$code"
           fi
 
-      - name: Verify APK and calculate checksum
+      - name: Verify APK signing certificate and calculate checksum
         id: apk
         if: steps.assemble.outputs.exit_code == '0'
         working-directory: source
         shell: bash
+        env:
+          EXPECTED_CERT_SHA256: ${{ steps.signing.outputs.fingerprint }}
         run: |
           set -euo pipefail
           apk="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$apk"
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-signing-cert.txt"
+          actual_fingerprint="$(sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signing-cert.txt" | head -n 1 | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          expected_fingerprint="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          if [[ -z "$actual_fingerprint" || -z "$expected_fingerprint" || "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "::error::APK signer certificate does not match the persisted stable CI key. Refusing to publish."
+            exit 1
+          fi
           echo "path=$apk" >> "$GITHUB_OUTPUT"
+          echo "signing_cert_sha256=$actual_fingerprint" >> "$GITHUB_OUTPUT"
           sha256sum "$apk" | tee "$RUNNER_TEMP/apk-checksum.txt"
-          echo "APK exists and is non-empty."
+          echo "APK certificate SHA-256 verified against persisted private CI signing key."
+          {
+            echo "### APK signing identity"
+            echo "- Certificate SHA-256: `$actual_fingerprint`"
+            echo "- Verified against private release `ci-debug-signing-key-v1`."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK only to a private GitHub release
         if: steps.assemble.outputs.exit_code == '0'
@@ -199,6 +234,7 @@ jobs:
           SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          SIGNING_CERT_SHA256: ${{ steps.apk.outputs.signing_cert_sha256 }}
         run: |
           set -euo pipefail
           tag="ci-apk-${RUN_ID}-${RUN_ATTEMPT}"
@@ -206,6 +242,6 @@ jobs:
             --repo AbhasGanguli/travel-assistant \
             --target "$SOURCE_SHA" \
             --title "Temporary debug APK - ${SOURCE_SHA:0:12}" \
-            --notes "Temporary debug APK for manual validation. Source commit: $SOURCE_SHA. Delete this release and its tag after downloading the APK."
+            --notes "Temporary debug APK for manual validation. Source commit: $SOURCE_SHA. Signing certificate SHA-256: $SIGNING_CERT_SHA256. Built and verified with persistent private signing key ci-debug-signing-key-v1. Delete this APK release and its tag after downloading; do not delete the stable signing-key release."
           echo "Private release created: https://github.com/AbhasGanguli/travel-assistant/releases/tag/$tag"
           echo "The APK was not uploaded as an artifact to the public CI repository."
