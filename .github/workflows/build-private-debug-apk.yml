@@ -1,12 +1,6 @@
 name: Build private debug APK
 
 on:
-  # Temporary diagnostic path: only a deliberate source-pin update builds an APK.
-  push:
-    branches:
-      - main
-    paths:
-      - "requested-source.txt"
   workflow_dispatch:
     inputs:
       source_sha:
