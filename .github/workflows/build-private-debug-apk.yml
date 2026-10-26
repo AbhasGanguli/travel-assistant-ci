@@ -1,0 +1,184 @@
+name: Build private debug APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Full source commit SHA to build (defaults to the CI-validated itinerary-order commit)"
+        required: true
+        type: string
+        default: "b8415a5eb16d1af21a61c7fb695d96101592c647"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-debug-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and publish APK to private source repo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out CI controller
+        uses: actions/checkout@v4
+        with:
+          path: control
+          persist-credentials: false
+
+      - name: Validate source SHA
+        id: source_ref
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::source_sha must be a full 40-character commit SHA."
+            exit 1
+          fi
+          echo "sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "Selected source SHA: $REQUESTED_SHA"
+
+      - name: Check required credentials without printing them
+        shell: bash
+        env:
+          PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+          NONPROD_GOOGLE_SERVICES_JSON: ${{ secrets.NONPROD_GOOGLE_SERVICES_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PRIVATE_RELEASE_TOKEN" ]]; then
+            echo "::error::Add repository secret PRIVATE_REPO_RELEASE_TOKEN with Contents: Read and write access to AbhasGanguli/travel-assistant."
+            exit 1
+          fi
+          if [[ -z "$NONPROD_GOOGLE_SERVICES_JSON" ]]; then
+            echo "::error::Add repository secret NONPROD_GOOGLE_SERVICES_JSON containing the google-services.json for Firebase project travel-agent-9c305."
+            exit 1
+          fi
+          echo "Required build credentials are configured."
+
+      - name: Check out private application source
+        uses: actions/checkout@v4
+        with:
+          repository: AbhasGanguli/travel-assistant
+          ref: ${{ steps.source_ref.outputs.sha }}
+          token: ${{ secrets.PRIVATE_REPO_READ_TOKEN }}
+          path: source
+          persist-credentials: false
+
+      - name: Verify checked-out source
+        working-directory: source
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.source_ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Checked-out source SHA did not match the requested SHA."
+            exit 1
+          fi
+          echo "Source checkout verified: $actual_sha"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            source/**/*.gradle
+            source/**/*.gradle.kts
+            source/gradle/libs.versions.toml
+            source/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" > "$RUNNER_TEMP/sdkmanager.log" 2>&1
+          echo "Android SDK components installed."
+
+      - name: Configure non-production Firebase resources
+        working-directory: source
+        shell: bash
+        env:
+          NONPROD_GOOGLE_SERVICES_JSON: ${{ secrets.NONPROD_GOOGLE_SERVICES_JSON }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NONPROD_GOOGLE_SERVICES_JSON" > app/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path("app/google-services.json").read_text())
+          project_id = config.get("project_info", {}).get("project_id")
+          package_names = {
+              client.get("client_info", {}).get("android_client_info", {}).get("package_name")
+              for client in config.get("client", [])
+          }
+          if project_id != "travel-agent-9c305":
+              raise SystemExit("Configured Firebase project must be travel-agent-9c305.")
+          if "com.travelassistant.app" not in package_names:
+              raise SystemExit("Firebase config does not include com.travelassistant.app.")
+          print("Non-production Firebase config validated.")
+          PY
+
+      - name: Assemble debug APK (suppress private build logs)
+        id: assemble
+        working-directory: source
+        shell: bash
+        run: |
+          set +e
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --console=plain > "$RUNNER_TEMP/apk-build.log" 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [[ "$code" -eq 0 ]]; then
+            echo "Debug APK build: PASS"
+          else
+            echo "::error::Debug APK build failed. Raw Gradle output is suppressed because the application source is private."
+            grep -E '^FAILURE: Build failed|^Execution failed for task|^Could not resolve ' "$RUNNER_TEMP/apk-build.log"               | sed -E 's#file://[^ ]+#<source-path>#g; s#https?://[^ ]+#<url>#g'               | cut -c1-180 | head -n 8 || true
+            exit "$code"
+          fi
+
+      - name: Verify APK and calculate checksum
+        id: apk
+        if: steps.assemble.outputs.exit_code == '0'
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          echo "path=$apk" >> "$GITHUB_OUTPUT"
+          sha256sum "$apk" | tee "$RUNNER_TEMP/apk-checksum.txt"
+          echo "APK exists and is non-empty."
+
+      - name: Upload APK only to a private GitHub release
+        if: steps.assemble.outputs.exit_code == '0'
+        working-directory: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+          SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          tag="ci-apk-${RUN_ID}-${RUN_ATTEMPT}"
+          gh release create "$tag" "${{ steps.apk.outputs.path }}" \
+            --repo AbhasGanguli/travel-assistant \
+            --target "$SOURCE_SHA" \
+            --title "Temporary debug APK - ${SOURCE_SHA:0:12}" \
+            --notes "Temporary debug APK for manual validation. Source commit: $SOURCE_SHA. Delete this release and its tag after downloading the APK."
+          echo "Private release created: https://github.com/AbhasGanguli/travel-assistant/releases/tag/$tag"
+          echo "The APK was not uploaded as an artifact to the public CI repository."
