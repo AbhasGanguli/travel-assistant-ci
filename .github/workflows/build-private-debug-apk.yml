@@ -256,6 +256,7 @@ jobs:
 
       - name: Publish non-secret APK build status to CI controller
         if: always()
+        working-directory: control
         shell: bash
         env:
           SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
