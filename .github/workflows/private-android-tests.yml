@@ -214,16 +214,39 @@ jobs:
             echo "::error::Kotlin main or unit-test compilation failed. Raw build output is suppressed to avoid exposing private source in this public workflow."
             python3 - "$RUNNER_TEMP/compile.log" <<'PY'
           import re, sys
-          for line in open(sys.argv[1], errors="replace"):
-              line = line.rstrip()
+          lines = open(sys.argv[1], errors="replace").read().splitlines()
+          in_what_went_wrong = False
+          detail_lines_left = 0
+          printed_failure_header = False
+          for line in lines:
+              line = re.sub(r"\x1b\[[0-9;]*m", "", line).rstrip()
               if line.startswith("e: file://"):
                   match = re.match(r"e: file://.*/([^/:]+):(\d+):(\d+):?\s*(.*)", line)
                   if match:
                       filename, row, col, message = match.groups()
                       message = re.sub(r"file://\S+", "<source>", message)
+                      message = re.sub(r"https?://\S+", "<url>", message)
+                      message = re.sub(r"(?i)(token|password|authorization|api[_-]?key)[=:]\S+", r"\1=<redacted>", message)
                       print(f"Compiler diagnostic: {filename}:{row}:{col} ({message[:180]})")
-              elif line.startswith("FAILURE: Build failed"):
+              if line.startswith("FAILURE: Build failed"):
                   print("Gradle reported a build failure.")
+              if line.strip() == "What went wrong:":
+                  in_what_went_wrong = True
+                  detail_lines_left = 4
+                  if not printed_failure_header:
+                      print("Sanitized Gradle failure details:")
+                      printed_failure_header = True
+                  continue
+              if in_what_went_wrong and detail_lines_left > 0 and line.strip():
+                  detail = line.strip()
+                  detail = re.sub(r"file://\S+", "<source>", detail)
+                  detail = re.sub(r"https?://\S+", "<url>", detail)
+                  detail = re.sub(r"/(?:home|root|tmp|runner)/[^ ]+", "<path>", detail)
+                  detail = re.sub(r"(?i)(token|password|authorization|api[_-]?key)[=:]\S+", r"\1=<redacted>", detail)
+                  print(f"Gradle failure detail: {detail[:180]}")
+                  detail_lines_left -= 1
+                  if detail_lines_left == 0:
+                      in_what_went_wrong = False
           PY
           fi
           exit 0
