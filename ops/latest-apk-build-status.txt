@@ -1,8 +1,8 @@
 status=READY
-source_sha=f0a96665ca36e7c89b59115a35f666a87e8e9e5c
-run_id=40869347744
+source_sha=e2ea6bb97c31c54c5141baf7e3280275db5384d7
+run_id=40869463332
 run_attempt=1
 signing_certificate_sha256=4c6a7295715149b27ddea0ebbe10e37b4115523a4e814d34cfad1e55f36662d4
-apk_sha256=26d27db4346d38fc0ae4a430b8e40ed7ea32766a8c9eb5a8daf1477e0d6fc57d
-private_release_url=https://github.com/AbhasGanguli/travel-assistant/releases/tag/ci-apk-40869347744-1
-completed_at_utc=2026-10-29T12:00:45Z
+apk_sha256=af9bc77b36616701750d227f8f3321de86c56ed5ea0b0da8b00eafa0cddfce1a
+private_release_url=https://github.com/AbhasGanguli/travel-assistant/releases/tag/ci-apk-40869463332-1
+completed_at_utc=2026-10-29T12:03:54Z
