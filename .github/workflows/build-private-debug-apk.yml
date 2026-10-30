@@ -470,6 +470,7 @@ jobs:
           result="FAILED"
           firebase_status="SKIPPED_NOT_CONFIGURED"
           private_release_status="${RELEASE_URL:-NONE}"
+          private_release_url="NONE"
 
           if [[ "$BUILD_RESULT" == "success" ]]; then
             if [[ "$FIREBASE_CONFIGURED" == "true" ]]; then
@@ -480,13 +481,16 @@ jobs:
                   private_release_status="REMOVED_AFTER_SUCCESSFUL_FIREBASE_DISTRIBUTION"
                 elif [[ "$CLEANUP_OUTCOME" == "failure" ]]; then
                   private_release_status="RETAINED_CLEANUP_FAILED:$RELEASE_URL"
+                  private_release_url="$RELEASE_URL"
                 fi
               else
                 result="FAILED"
                 firebase_status="FAILED"
+                private_release_url="$RELEASE_URL"
               fi
             else
               result="READY_PRIVATE_FALLBACK"
+              private_release_url="$RELEASE_URL"
             fi
           else
             firebase_status="NOT_RUN_BUILD_FAILED"
@@ -502,7 +506,7 @@ jobs:
             echo "version_code=${VERSION_CODE:-NOT_VERIFIED}"
             echo "firebase_app_distribution_status=$firebase_status"
             echo "private_release_status=$private_release_status"
-            echo "private_release_url=${RELEASE_URL:-NONE}"
+            echo "private_release_url=$private_release_url"
             echo "completed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > "$RUNNER_TEMP/latest-apk-build-status.txt"
 
@@ -517,7 +521,7 @@ jobs:
             exit 0
           fi
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Record latest private APK build status"
           git push origin HEAD:main
           echo "Published non-secret build status to the controller repository."
