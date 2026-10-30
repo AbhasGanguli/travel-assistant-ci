@@ -409,11 +409,22 @@ jobs:
           tester_group="${FIREBASE_TESTER_GROUP:-internal-testers}"
           printf 'Travel Assistant internal build %s\nSource commit: %s\n' \
             "$EXPECTED_VERSION_CODE" "$SOURCE_SHA" > "$RUNNER_TEMP/release-notes.txt"
+          # Firebase CLI success output contains a temporary APK download URL with a bearer token.
+          # This repository is public, so never print the raw CLI output into Actions logs.
+          firebase_log="$RUNNER_TEMP/firebase-appdistribution.log"
+          set +e
           firebase appdistribution:distribute "$APK_PATH" \
             --app "$FIREBASE_APP_ID" \
             --groups "$tester_group" \
-            --release-notes-file "$RUNNER_TEMP/release-notes.txt"
-          echo "Firebase App Distribution upload completed."
+            --release-notes-file "$RUNNER_TEMP/release-notes.txt" \
+            >"$firebase_log" 2>&1
+          firebase_exit_code=$?
+          set -e
+          if [[ "$firebase_exit_code" -ne 0 ]]; then
+            echo "::error::Firebase App Distribution failed (exit code $firebase_exit_code). Raw CLI output was suppressed because it may contain temporary APK download credentials."
+            exit "$firebase_exit_code"
+          fi
+          echo "Firebase App Distribution upload and tester-group distribution succeeded."
 
       - name: Remove private staging release after successful Firebase delivery
         id: cleanup_private_release
@@ -483,6 +494,7 @@ jobs:
                 firebase_status="SUCCESS"
                 if [[ "$CLEANUP_OUTCOME" == "success" ]]; then
                   private_release_status="REMOVED_AFTER_SUCCESSFUL_FIREBASE_DISTRIBUTION"
+                  private_release_url="NONE"
                 elif [[ "$CLEANUP_OUTCOME" == "failure" ]]; then
                   private_release_status="RETAINED_CLEANUP_FAILED"
                   private_release_url="$RELEASE_URL"
