@@ -188,18 +188,18 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
             fi
             python3 - <<'PY'
-from pathlib import Path
-import re
-import xml.etree.ElementTree as ET
-root = Path("app/build/test-results/testDebugUnitTest")
-failures = []
-for report in sorted(root.glob("TEST-*.xml")) if root.exists() else []:
-    try:
-        suite = ET.parse(report).getroot()
-    except Exception:
-        continue
-    for case in suite.iter("testcase"):
-        for kind in ("failure", "error"):
+          from pathlib import Path
+          import re
+          import xml.etree.ElementTree as ET
+          root = Path("app/build/test-results/testDebugUnitTest")
+          failures = []
+          for report in sorted(root.glob("TEST-*.xml")) if root.exists() else []:
+              try:
+                  suite = ET.parse(report).getroot()
+              except Exception:
+                  continue
+              for case in suite.iter("testcase"):
+                  for kind in ("failure", "error"):
             item = case.find(kind)
             if item is None:
                 continue
@@ -210,17 +210,17 @@ for report in sorted(root.glob("TEST-*.xml")) if root.exists() else []:
             block = f"{case.attrib.get('classname', '')}.{case.attrib.get('name', '')}: {message}\n{detail[:1800]}"
             failures.append(block)
             break
-if failures:
-    print("Sanitized JVM test failures:")
-    for block in failures[:12]:
-        print(block)
-    with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-        summary.write("\n### Sanitized JVM test failures\n```text\n")
-        summary.write("\n---\n".join(failures[:12]))
-        summary.write("\n```\n")
-else:
-    print("No JUnit XML failure details were available in the test-results directory.")
-PY
+          if failures:
+              print("Sanitized JVM test failures:")
+              for block in failures[:12]:
+                  print(block)
+              with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("\n### Sanitized JVM test failures\n```text\n")
+                  summary.write("\n---\n".join(failures[:12]))
+                  summary.write("\n```\n")
+          else:
+              print("No JUnit XML failure details were available in the test-results directory.")
+          PY
             exit "$code"
           fi
 
