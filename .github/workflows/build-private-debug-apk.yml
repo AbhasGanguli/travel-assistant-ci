@@ -177,7 +177,10 @@ jobs:
           else
             echo "::error::JVM regression suite failed; APK will not be published."
             echo "Sanitized Kotlin/Gradle diagnostics:"
-            diagnostics="$(grep -E '^e: |^w: |^> Task .* FAILED|^FAILURE: Build failed' "$RUNNER_TEMP/apk-unit-tests.log" | sed -E 's#file:///[^:]+/source/#file://<source>/#g; s#/home/runner/work/[^/:]+/[^/:]+/source/#<source>/#g' | cut -c1-260 | head -n 30 || true)"
+            diagnostics="$(grep -E '^e: |^> Task .* FAILED|^FAILURE: Build failed|^Execution failed for task|^Caused by:' "$RUNNER_TEMP/apk-unit-tests.log" | sed -E 's#file:///[^:]+/source/#file://<source>/#g; s#/home/runner/work/[^/:]+/[^/:]+/source/#<source>/#g' | cut -c1-260 | head -n 50 || true)"
+            if [[ -z "$diagnostics" ]]; then
+              diagnostics="$(tail -n 80 "$RUNNER_TEMP/apk-unit-tests.log" | sed -E 's#file:///[^:]+/source/#file://<source>/#g; s#/home/runner/work/[^/:]+/[^/:]+/source/#<source>/#g' | cut -c1-260 | head -n 80 || true)"
+            fi
             if [[ -n "$diagnostics" ]]; then
               printf '%s\n' "$diagnostics"
               {
