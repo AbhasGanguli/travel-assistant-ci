@@ -308,7 +308,7 @@ jobs:
             echo "- Verified against private release `ci-debug-signing-key-v1`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Keep a private GitHub release as fallback
+      - name: Stage APK in a temporary private source-repo release
         id: publish
         if: steps.assemble.outputs.exit_code == '0'
         working-directory: source
