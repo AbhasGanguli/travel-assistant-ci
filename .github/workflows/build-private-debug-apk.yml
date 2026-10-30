@@ -469,8 +469,12 @@ jobs:
 
           result="FAILED"
           firebase_status="SKIPPED_NOT_CONFIGURED"
-          private_release_status="${RELEASE_URL:-NONE}"
+          private_release_status="NONE"
           private_release_url="NONE"
+          if [[ -n "${RELEASE_URL:-}" ]]; then
+            private_release_status="RETAINED_PRIVATE_STAGING_RELEASE"
+            private_release_url="$RELEASE_URL"
+          fi
 
           if [[ "$BUILD_RESULT" == "success" ]]; then
             if [[ "$FIREBASE_CONFIGURED" == "true" ]]; then
@@ -480,16 +484,18 @@ jobs:
                 if [[ "$CLEANUP_OUTCOME" == "success" ]]; then
                   private_release_status="REMOVED_AFTER_SUCCESSFUL_FIREBASE_DISTRIBUTION"
                 elif [[ "$CLEANUP_OUTCOME" == "failure" ]]; then
-                  private_release_status="RETAINED_CLEANUP_FAILED:$RELEASE_URL"
+                  private_release_status="RETAINED_CLEANUP_FAILED"
                   private_release_url="$RELEASE_URL"
                 fi
               else
                 result="FAILED"
                 firebase_status="FAILED"
+                private_release_status="RETAINED_AFTER_FIREBASE_FAILURE"
                 private_release_url="$RELEASE_URL"
               fi
             else
               result="READY_PRIVATE_FALLBACK"
+              private_release_status="RETAINED_WIF_NOT_CONFIGURED"
               private_release_url="$RELEASE_URL"
             fi
           else
