@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: private-debug-apk
@@ -236,7 +237,7 @@ jobs:
         run: |
           set +e
           chmod +x ./gradlew
-          ./gradlew :app:assembleDebug --console=plain > "$RUNNER_TEMP/apk-build.log" 2>&1
+          ./gradlew :app:assembleDebug -PappVersionCode="$GITHUB_RUN_NUMBER" --console=plain > "$RUNNER_TEMP/apk-build.log" 2>&1
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -259,6 +260,14 @@ jobs:
           set -euo pipefail
           apk="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$apk"
+          apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          actual_version_code="$("$apkanalyzer" manifest version-code "$apk")"
+          expected_version_code="$GITHUB_RUN_NUMBER"
+          if [[ "$actual_version_code" != "$expected_version_code" ]]; then
+            echo "::error::APK versionCode ($actual_version_code) does not match CI run number ($expected_version_code). Refusing to publish."
+            exit 1
+          fi
+          echo "version_code=$actual_version_code" >> "$GITHUB_OUTPUT"
           apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           "$apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-signing-cert.txt"
           actual_fingerprint="$(sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signing-cert.txt" | head -n 1 | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
@@ -276,6 +285,66 @@ jobs:
             echo "- Certificate SHA-256: `$actual_fingerprint`"
             echo "- Verified against private release `ci-debug-signing-key-v1`."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        id: google_auth
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Node.js for Firebase CLI
+        if: steps.google_auth.outcome == 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Firebase CLI
+        if: steps.google_auth.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global firebase-tools
+
+      - name: Distribute signed APK through Firebase App Distribution
+        id: firebase_distribute
+        if: steps.google_auth.outcome == 'success'
+        working-directory: source
+        shell: bash
+        env:
+          FIREBASE_TESTER_GROUP: ${{ vars.FIREBASE_TESTER_GROUP }}
+          EXPECTED_VERSION_CODE: ${{ steps.apk.outputs.version_code }}
+          SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          app_id="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path("app/google-services.json").read_text())
+          for client in config.get("client", []):
+              info = client.get("client_info", {})
+              android = info.get("android_client_info", {})
+              if android.get("package_name") == "com.travelassistant.app":
+                  app_id = info.get("mobilesdk_app_id")
+                  if app_id:
+                      print(app_id)
+                      raise SystemExit(0)
+          raise SystemExit("Firebase app ID for com.travelassistant.app was not found.")
+          PY
+          )"
+          tester_group="${FIREBASE_TESTER_GROUP:-internal-testers}"
+          printf 'Travel Assistant internal build %s\nSource commit: %s\n' \
+            "$EXPECTED_VERSION_CODE" "$SOURCE_SHA" > "$RUNNER_TEMP/release-notes.txt"
+          firebase appdistribution:distribute app/build/outputs/apk/debug/app-debug.apk \
+            --app "$app_id" \
+            --groups "$tester_group" \
+            --release-notes-file "$RUNNER_TEMP/release-notes.txt"
+          echo "firebase_app_id=$app_id" >> "$GITHUB_OUTPUT"
+          echo "version_code=$EXPECTED_VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Firebase App Distribution upload completed."
 
       - name: Upload APK only to a private GitHub release
         id: publish
@@ -313,11 +382,16 @@ jobs:
           PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
           RELEASE_URL: ${{ steps.publish.outputs.release_url }}
           SIGNING_CERT_SHA256: ${{ steps.apk.outputs.signing_cert_sha256 }}
+          FIREBASE_OUTCOME: ${{ steps.firebase_distribute.outcome }}
+          FIREBASE_CONFIGURED: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+          VERSION_CODE: ${{ steps.apk.outputs.version_code }}
         run: |
           set -euo pipefail
           result="FAILED"
           if [[ "$ASSEMBLE_EXIT_CODE" == "0" && "$PUBLISH_OUTCOME" == "success" ]]; then
-            result="READY"
+            if [[ "$FIREBASE_CONFIGURED" != "true" || "$FIREBASE_OUTCOME" == "success" ]]; then
+              result="READY"
+            fi
           fi
           apk_sha256="NOT_AVAILABLE"
           if [[ -s "$RUNNER_TEMP/apk-checksum.txt" ]]; then
@@ -333,6 +407,8 @@ jobs:
             echo "run_attempt=$RUN_ATTEMPT"
             echo "signing_certificate_sha256=$cert_sha256"
             echo "apk_sha256=$apk_sha256"
+            echo "version_code=${VERSION_CODE:-NOT_VERIFIED}"
+            echo "firebase_app_distribution_status=${FIREBASE_OUTCOME:-SKIPPED}"
             echo "private_release_url=$release"
             echo "completed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > "$RUNNER_TEMP/latest-apk-build-status.txt"
