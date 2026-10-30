@@ -286,6 +286,30 @@ jobs:
             echo "- Verified against private release `ci-debug-signing-key-v1`."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Keep a private GitHub release as fallback
+        id: publish
+        if: steps.assemble.outputs.exit_code == '0'
+        working-directory: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+          SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SIGNING_CERT_SHA256: ${{ steps.apk.outputs.signing_cert_sha256 }}
+        run: |
+          set -euo pipefail
+          tag="ci-apk-${RUN_ID}-${RUN_ATTEMPT}"
+          gh release create "$tag" "${{ steps.apk.outputs.path }}" \
+            --repo AbhasGanguli/travel-assistant \
+            --target "$SOURCE_SHA" \
+            --title "Temporary debug APK - ${SOURCE_SHA:0:12}" \
+            --notes "Temporary debug APK for manual validation. Source commit: $SOURCE_SHA. Signing certificate SHA-256: $SIGNING_CERT_SHA256. Built and verified with persistent private signing key ci-debug-signing-key-v1. Delete this APK release and its tag after downloading; do not delete the stable signing-key release."
+          release_url="https://github.com/AbhasGanguli/travel-assistant/releases/tag/$tag"
+          echo "release_url=$release_url" >> "$GITHUB_OUTPUT"
+          echo "Private release created: $release_url"
+          echo "The APK was not uploaded as an artifact to the public CI repository."
+
       - name: Authenticate to Google Cloud with Workload Identity Federation
         id: google_auth
         if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
@@ -346,29 +370,6 @@ jobs:
           echo "version_code=$EXPECTED_VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "Firebase App Distribution upload completed."
 
-      - name: Upload APK only to a private GitHub release
-        id: publish
-        if: steps.assemble.outputs.exit_code == '0'
-        working-directory: source
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
-          SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          SIGNING_CERT_SHA256: ${{ steps.apk.outputs.signing_cert_sha256 }}
-        run: |
-          set -euo pipefail
-          tag="ci-apk-${RUN_ID}-${RUN_ATTEMPT}"
-          gh release create "$tag" "${{ steps.apk.outputs.path }}" \
-            --repo AbhasGanguli/travel-assistant \
-            --target "$SOURCE_SHA" \
-            --title "Temporary debug APK - ${SOURCE_SHA:0:12}" \
-            --notes "Temporary debug APK for manual validation. Source commit: $SOURCE_SHA. Signing certificate SHA-256: $SIGNING_CERT_SHA256. Built and verified with persistent private signing key ci-debug-signing-key-v1. Delete this APK release and its tag after downloading; do not delete the stable signing-key release."
-          release_url="https://github.com/AbhasGanguli/travel-assistant/releases/tag/$tag"
-          echo "release_url=$release_url" >> "$GITHUB_OUTPUT"
-          echo "Private release created: $release_url"
-          echo "The APK was not uploaded as an artifact to the public CI repository."
 
       - name: Publish non-secret APK build status to CI controller
         if: always()
