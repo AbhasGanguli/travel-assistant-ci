@@ -1,20 +1,27 @@
 # Travel Assistant CI Controller
 
-This public repository hosts a low-cost validation workflow for the application source kept in the private `travel-assistant` repository. It does not contain a mirror of the application code.
+This public repository hosts low-cost validation and internal APK distribution workflows for application source kept in the private `travel-assistant` repository. It does not contain a mirror of the application code.
 
-## Checks
+## Validation and internal APK build
 
-The workflow checks out the exact private commit pinned by `requested-source.txt` onto a temporary GitHub-hosted runner and performs:
+The private source commit is pinned by `requested-source.txt`. The controller workflow:
 
-1. Kotlin debug compilation.
-2. The JVM unit-test suite.
-3. The checked-in Room schema drift guard.
+1. Checks out and verifies the exact private application SHA.
+2. Runs the JVM regression suite.
+3. Assembles the internal debug APK with a monotonically increasing CI-run version code.
+4. Verifies the APK version code and stable signing certificate.
+5. Stages the APK in a temporary private release in the application repository.
+6. When Workload Identity Federation is configured, a separate Firebase distribution job downloads and SHA-256-verifies the APK, authenticates to Google Cloud, and uploads it to the configured App Distribution tester group.
+7. Deletes the private staging release after successful Firebase distribution. If Firebase distribution is not configured or fails, the private release is retained as a fallback.
+8. Records non-secret build status in `ops/latest-apk-build-status.txt`.
 
-APK assembly and artifact uploads are intentionally excluded. Architecture acceptance and device/APK testing remain separate gates.
+The build job that executes private application source has no GitHub OIDC token permission. Only the separate distribution job receives `id-token: write`; it does not check out or execute application source. The status update is also a separate job and is the only job with a write-capable controller `GITHUB_TOKEN`.
 
-## Request a validation run
+Architecture acceptance and on-device installation testing remain separate gates.
 
-Replace the single 40-character commit SHA in `requested-source.txt` with the private branch commit to validate, then commit the change to `main`. That file change starts the workflow. The workflow reports the source SHA so the result can be tied to the exact code revision.
+## Request a validation/distribution run
+
+Replace the single 40-character commit SHA in `requested-source.txt` with the private branch commit to validate, then update `ops/BUILD_VALIDATED_APK` on `main`. The marker change starts the build workflow. Alternatively, use `workflow_dispatch` on the `main` branch and supply the exact full SHA in `source_sha`. The workflow reports the source SHA so the result can be tied to the exact code revision.
 
 ## Access and privacy
 

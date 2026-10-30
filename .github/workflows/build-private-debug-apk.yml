@@ -15,7 +15,7 @@ on:
       - "ops/BUILD_VALIDATED_APK"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: private-debug-apk
@@ -23,16 +23,26 @@ concurrency:
 
 jobs:
   build:
-    name: Build and publish APK to private source repo
+    name: Test and stage APK privately
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source_ref.outputs.sha }}
+      release_tag: ${{ steps.publish.outputs.release_tag }}
+      release_url: ${{ steps.publish.outputs.release_url }}
+      version_code: ${{ steps.apk.outputs.version_code }}
+      signing_cert_sha256: ${{ steps.apk.outputs.signing_cert_sha256 }}
+      apk_sha256: ${{ steps.apk.outputs.apk_sha256 }}
+      firebase_app_id: ${{ steps.firebase_config.outputs.app_id }}
 
     steps:
       - name: Check out CI controller
         uses: actions/checkout@v4
         with:
           path: control
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Validate source SHA
         id: source_ref
@@ -140,6 +150,7 @@ jobs:
           echo "Android SDK components installed."
 
       - name: Configure non-production Firebase resources
+        id: firebase_config
         working-directory: source
         shell: bash
         env:
@@ -149,17 +160,27 @@ jobs:
           printf '%s' "$NONPROD_GOOGLE_SERVICES_JSON" > app/google-services.json
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
+
           config = json.loads(Path("app/google-services.json").read_text())
           project_id = config.get("project_info", {}).get("project_id")
-          package_names = {
-              client.get("client_info", {}).get("android_client_info", {}).get("package_name")
-              for client in config.get("client", [])
-          }
           if project_id != "travel-agent-9c305":
               raise SystemExit("Configured Firebase project must be travel-agent-9c305.")
-          if "com.travelassistant.app" not in package_names:
-              raise SystemExit("Firebase config does not include com.travelassistant.app.")
+
+          app_id = None
+          for client in config.get("client", []):
+              info = client.get("client_info", {})
+              android = info.get("android_client_info", {})
+              if android.get("package_name") == "com.travelassistant.app":
+                  app_id = info.get("mobilesdk_app_id")
+                  break
+
+          if not app_id:
+              raise SystemExit("Firebase config does not include com.travelassistant.app with a mobile app ID.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"app_id={app_id}\n")
           print("Non-production Firebase config validated.")
           PY
 
@@ -236,7 +257,7 @@ jobs:
         run: |
           set +e
           chmod +x ./gradlew
-          ./gradlew :app:assembleDebug --console=plain > "$RUNNER_TEMP/apk-build.log" 2>&1
+          ./gradlew :app:assembleDebug -PappVersionCode="$GITHUB_RUN_NUMBER" --console=plain > "$RUNNER_TEMP/apk-build.log" 2>&1
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -259,6 +280,14 @@ jobs:
           set -euo pipefail
           apk="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$apk"
+          apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          actual_version_code="$("$apkanalyzer" manifest version-code "$apk")"
+          expected_version_code="$GITHUB_RUN_NUMBER"
+          if [[ "$actual_version_code" != "$expected_version_code" ]]; then
+            echo "::error::APK versionCode ($actual_version_code) does not match CI run number ($expected_version_code). Refusing to publish."
+            exit 1
+          fi
+          echo "version_code=$actual_version_code" >> "$GITHUB_OUTPUT"
           apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           "$apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-signing-cert.txt"
           actual_fingerprint="$(sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signing-cert.txt" | head -n 1 | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
@@ -269,7 +298,9 @@ jobs:
           fi
           echo "path=$apk" >> "$GITHUB_OUTPUT"
           echo "signing_cert_sha256=$actual_fingerprint" >> "$GITHUB_OUTPUT"
-          sha256sum "$apk" | tee "$RUNNER_TEMP/apk-checksum.txt"
+          apk_sha256="$(sha256sum "$apk" | awk '{print $1}')"
+          printf '%s  %s\n' "$apk_sha256" "$apk" | tee "$RUNNER_TEMP/apk-checksum.txt"
+          echo "apk_sha256=$apk_sha256" >> "$GITHUB_OUTPUT"
           echo "APK certificate SHA-256 verified against persisted private CI signing key."
           {
             echo "### APK signing identity"
@@ -277,7 +308,7 @@ jobs:
             echo "- Verified against private release `ci-debug-signing-key-v1`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload APK only to a private GitHub release
+      - name: Stage APK in a temporary private source-repo release
         id: publish
         if: steps.assemble.outputs.exit_code == '0'
         working-directory: source
@@ -294,50 +325,199 @@ jobs:
           gh release create "$tag" "${{ steps.apk.outputs.path }}" \
             --repo AbhasGanguli/travel-assistant \
             --target "$SOURCE_SHA" \
-            --title "Temporary debug APK - ${SOURCE_SHA:0:12}" \
-            --notes "Temporary debug APK for manual validation. Source commit: $SOURCE_SHA. Signing certificate SHA-256: $SIGNING_CERT_SHA256. Built and verified with persistent private signing key ci-debug-signing-key-v1. Delete this APK release and its tag after downloading; do not delete the stable signing-key release."
+            --title "Temporary APK staging - ${SOURCE_SHA:0:12}" \
+            --notes "Private staging asset for Firebase App Distribution. Source commit: $SOURCE_SHA. Version code: ${{ steps.apk.outputs.version_code }}. Signing certificate SHA-256: $SIGNING_CERT_SHA256. Automatically deleted after successful Firebase delivery; retained as a private fallback if delivery is unavailable or fails. Do not delete the stable signing-key release."
           release_url="https://github.com/AbhasGanguli/travel-assistant/releases/tag/$tag"
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
           echo "release_url=$release_url" >> "$GITHUB_OUTPUT"
-          echo "Private release created: $release_url"
+          echo "Private staging release created: $release_url"
           echo "The APK was not uploaded as an artifact to the public CI repository."
 
+  distribute:
+    name: Distribute APK to Firebase
+    needs: build
+    if: ${{ needs.build.result == 'success' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      firebase_outcome: ${{ steps.firebase_distribute.outcome }}
+      cleanup_outcome: ${{ steps.cleanup_private_release.outcome }}
+
+    steps:
+      - name: Download the exact APK from the private staging release
+        id: download_apk
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_READ_TOKEN }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          EXPECTED_APK_SHA256: ${{ needs.build.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_TAG"
+          test -n "$EXPECTED_APK_SHA256"
+          mkdir -p "$RUNNER_TEMP/travel-assistant-apk"
+          gh release download "$RELEASE_TAG" \
+            --repo AbhasGanguli/travel-assistant \
+            --pattern "app-debug.apk" \
+            --dir "$RUNNER_TEMP/travel-assistant-apk"
+          apk="$RUNNER_TEMP/travel-assistant-apk/app-debug.apk"
+          test -s "$apk"
+          actual_sha256="$(sha256sum "$apk" | awk '{print $1}')"
+          if [[ "$actual_sha256" != "$EXPECTED_APK_SHA256" ]]; then
+            echo "::error::Downloaded APK checksum does not match the build job output."
+            exit 1
+          fi
+          echo "apk_path=$apk" >> "$GITHUB_OUTPUT"
+          echo "Private staging APK checksum verified."
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        id: google_auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Node.js for Firebase CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Firebase CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global firebase-tools
+
+      - name: Distribute signed APK through Firebase App Distribution
+        id: firebase_distribute
+        shell: bash
+        env:
+          APK_PATH: ${{ steps.download_apk.outputs.apk_path }}
+          FIREBASE_APP_ID: ${{ needs.build.outputs.firebase_app_id }}
+          FIREBASE_TESTER_GROUP: ${{ vars.FIREBASE_TESTER_GROUP }}
+          EXPECTED_VERSION_CODE: ${{ needs.build.outputs.version_code }}
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -s "$APK_PATH"
+          test -n "$FIREBASE_APP_ID"
+          tester_group="${FIREBASE_TESTER_GROUP:-internal-testers}"
+          printf 'Travel Assistant internal build %s\nSource commit: %s\n' \
+            "$EXPECTED_VERSION_CODE" "$SOURCE_SHA" > "$RUNNER_TEMP/release-notes.txt"
+          firebase appdistribution:distribute "$APK_PATH" \
+            --app "$FIREBASE_APP_ID" \
+            --groups "$tester_group" \
+            --release-notes-file "$RUNNER_TEMP/release-notes.txt"
+          echo "Firebase App Distribution upload completed."
+
+      - name: Remove private staging release after successful Firebase delivery
+        id: cleanup_private_release
+        if: steps.firebase_distribute.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release delete "$RELEASE_TAG" \
+            --repo AbhasGanguli/travel-assistant \
+            --cleanup-tag \
+            --yes
+          echo "Temporary private APK staging release and tag removed."
+
+  status:
+    name: Record non-secret build status
+    needs: [build, distribute]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out CI controller for status update
+        uses: actions/checkout@v4
+        with:
+          path: control
+          persist-credentials: true
+
       - name: Publish non-secret APK build status to CI controller
-        if: always()
         working-directory: control
         shell: bash
         env:
-          SOURCE_SHA: ${{ steps.source_ref.outputs.sha }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          ASSEMBLE_EXIT_CODE: ${{ steps.assemble.outputs.exit_code }}
-          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
-          RELEASE_URL: ${{ steps.publish.outputs.release_url }}
-          SIGNING_CERT_SHA256: ${{ steps.apk.outputs.signing_cert_sha256 }}
+          RELEASE_URL: ${{ needs.build.outputs.release_url }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          SIGNING_CERT_SHA256: ${{ needs.build.outputs.signing_cert_sha256 }}
+          APK_SHA256: ${{ needs.build.outputs.apk_sha256 }}
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+          FIREBASE_CONFIGURED: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+          FIREBASE_JOB_RESULT: ${{ needs.distribute.result }}
+          FIREBASE_OUTCOME: ${{ needs.distribute.outputs.firebase_outcome }}
+          CLEANUP_OUTCOME: ${{ needs.distribute.outputs.cleanup_outcome }}
         run: |
           set -euo pipefail
+
           result="FAILED"
-          if [[ "$ASSEMBLE_EXIT_CODE" == "0" && "$PUBLISH_OUTCOME" == "success" ]]; then
-            result="READY"
+          firebase_status="SKIPPED_NOT_CONFIGURED"
+          private_release_status="NONE"
+          private_release_url="NONE"
+          if [[ -n "${RELEASE_URL:-}" ]]; then
+            private_release_status="RETAINED_PRIVATE_STAGING_RELEASE"
+            private_release_url="$RELEASE_URL"
           fi
-          apk_sha256="NOT_AVAILABLE"
-          if [[ -s "$RUNNER_TEMP/apk-checksum.txt" ]]; then
-            apk_sha256="$(awk '{print $1}' "$RUNNER_TEMP/apk-checksum.txt")"
+
+          if [[ "$BUILD_RESULT" == "success" ]]; then
+            if [[ "$FIREBASE_CONFIGURED" == "true" ]]; then
+              if [[ "$FIREBASE_JOB_RESULT" == "success" && "$FIREBASE_OUTCOME" == "success" ]]; then
+                result="READY"
+                firebase_status="SUCCESS"
+                if [[ "$CLEANUP_OUTCOME" == "success" ]]; then
+                  private_release_status="REMOVED_AFTER_SUCCESSFUL_FIREBASE_DISTRIBUTION"
+                elif [[ "$CLEANUP_OUTCOME" == "failure" ]]; then
+                  private_release_status="RETAINED_CLEANUP_FAILED"
+                  private_release_url="$RELEASE_URL"
+                fi
+              else
+                result="FAILED"
+                firebase_status="FAILED"
+                private_release_status="RETAINED_AFTER_FIREBASE_FAILURE"
+                private_release_url="$RELEASE_URL"
+              fi
+            else
+              result="READY_PRIVATE_FALLBACK"
+              private_release_status="RETAINED_WIF_NOT_CONFIGURED"
+              private_release_url="$RELEASE_URL"
+            fi
+          else
+            firebase_status="NOT_RUN_BUILD_FAILED"
           fi
-          cert_sha256="${SIGNING_CERT_SHA256:-NOT_VERIFIED}"
-          release="${RELEASE_URL:-NONE}"
-          source="${SOURCE_SHA:-NOT_RESOLVED}"
+
           {
             echo "status=$result"
-            echo "source_sha=$source"
+            echo "source_sha=${SOURCE_SHA:-NOT_RESOLVED}"
             echo "run_id=$RUN_ID"
             echo "run_attempt=$RUN_ATTEMPT"
-            echo "signing_certificate_sha256=$cert_sha256"
-            echo "apk_sha256=$apk_sha256"
-            echo "private_release_url=$release"
+            echo "signing_certificate_sha256=${SIGNING_CERT_SHA256:-NOT_VERIFIED}"
+            echo "apk_sha256=${APK_SHA256:-NOT_AVAILABLE}"
+            echo "version_code=${VERSION_CODE:-NOT_VERIFIED}"
+            echo "firebase_app_distribution_status=$firebase_status"
+            echo "private_release_status=$private_release_status"
+            echo "private_release_url=$private_release_url"
             echo "completed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > "$RUNNER_TEMP/latest-apk-build-status.txt"
 
-          # Publish status metadata only; APK binaries and signing material stay private.
+          # Only this trusted status job gets a write-capable GITHUB_TOKEN.
+          # The application source is never checked out or executed in this job.
           git fetch origin main
           git checkout -B status-update origin/main
           cp "$RUNNER_TEMP/latest-apk-build-status.txt" ops/latest-apk-build-status.txt
