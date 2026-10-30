@@ -1,8 +1,8 @@
 status=FAILED
-source_sha=6b13c092a8370e1096b0876dcb2ccea570cf03cc
-run_id=41007886849
+source_sha=56b03cf234ce6266e5f59ea3b09933245d7f39a6
+run_id=41007981970
 run_attempt=1
 signing_certificate_sha256=NOT_VERIFIED
 apk_sha256=NOT_AVAILABLE
 private_release_url=NONE
-completed_at_utc=2026-10-30T05:21:58Z
+completed_at_utc=2026-10-30T05:23:30Z
