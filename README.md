@@ -13,7 +13,8 @@ The private source commit is pinned by `requested-source.txt`. The controller wo
 5. Stages the APK in a temporary private release in the application repository.
 6. When Workload Identity Federation is configured, a separate Firebase distribution job downloads and SHA-256-verifies the APK, authenticates to Google Cloud, and uploads it to the configured App Distribution tester group.
 7. Deletes the private staging release after successful Firebase distribution. If Firebase distribution is not configured or fails, the private release is retained as a fallback.
-8. Records non-secret build status in `ops/latest-apk-build-status.txt`.
+8. Suppresses raw Firebase CLI output in public workflow logs because successful CLI output includes a temporary APK download URL with a bearer token.
+9. Records non-secret build status in `ops/latest-apk-build-status.txt`.
 
 The build job that executes private application source has no GitHub OIDC token permission. Only the separate distribution job receives `id-token: write`; it does not check out or execute application source. The status update is also a separate job and is the only job with a write-capable controller `GITHUB_TOKEN`.
 
