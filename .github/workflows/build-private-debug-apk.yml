@@ -176,7 +176,17 @@ jobs:
             echo "JVM regression suite: PASS"
           else
             echo "::error::JVM regression suite failed; APK will not be published."
-            grep -E 'FAILED|tests completed|FAILURE: Build failed' "$RUNNER_TEMP/apk-unit-tests.log" | cut -c1-180 | head -n 20 || true
+            echo "Sanitized Kotlin/Gradle diagnostics:"
+            diagnostics="$(grep -E '^e: |^w: |^> Task .* FAILED|^FAILURE: Build failed' "$RUNNER_TEMP/apk-unit-tests.log" | sed -E 's#file:///[^:]+/source/#file://<source>/#g; s#/home/runner/work/[^/:]+/[^/:]+/source/#<source>/#g' | cut -c1-260 | head -n 30 || true)"
+            if [[ -n "$diagnostics" ]]; then
+              printf '%s\n' "$diagnostics"
+              {
+                echo "### Sanitized Kotlin/Gradle diagnostics"
+                echo '```text'
+                printf '%s\n' "$diagnostics"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit "$code"
           fi
 
