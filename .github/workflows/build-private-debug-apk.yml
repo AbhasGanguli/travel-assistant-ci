@@ -303,9 +303,9 @@ jobs:
           echo "apk_sha256=$apk_sha256" >> "$GITHUB_OUTPUT"
           echo "APK certificate SHA-256 verified against persisted private CI signing key."
           {
-            echo "### APK signing identity"
-            echo "- Certificate SHA-256: `$actual_fingerprint`"
-            echo "- Verified against private release `ci-debug-signing-key-v1`."
+            echo '### APK signing identity'
+            printf '%s\n' "- Certificate SHA-256: ${actual_fingerprint}"
+            echo '- Verified against private release `ci-debug-signing-key-v1`.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stage APK in a temporary private source-repo release
