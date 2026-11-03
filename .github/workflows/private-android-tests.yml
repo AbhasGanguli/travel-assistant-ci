@@ -198,6 +198,74 @@ jobs:
             source/gradle/libs.versions.toml
             source/gradle/wrapper/gradle-wrapper.properties
 
+      - name: Verify Firebase installer AppCompat theme in merged debug manifest
+        id: installer_manifest
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:processDebugMainManifest --console=plain > "$RUNNER_TEMP/manifest-merge.log" 2>&1 || {
+            echo "::error::Debug manifest merge failed. Sanitized task diagnostics:"
+            grep -E '^FAILURE: Build failed|^Execution failed for task|^Could not resolve |^> Task .* FAILED' "$RUNNER_TEMP/manifest-merge.log" | cut -c1-220 | head -n 12 || true
+            exit 1
+          }
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          android_ns = "{http://schemas.android.com/apk/res/android}"
+          expected = "@style/Theme.TravelAssistant.Debug"
+          installer_name = "com.google.firebase.appdistribution.impl.InstallActivity"
+          candidates = []
+
+          for manifest in sorted(Path("app/build/intermediates").rglob("AndroidManifest.xml")):
+              try:
+                  root = ET.parse(manifest).getroot()
+              except (ET.ParseError, OSError):
+                  continue
+              application = root.find("application")
+              if application is None:
+                  continue
+              installer = next(
+                  (
+                      activity
+                      for activity in application.findall("activity")
+                      if activity.attrib.get(android_ns + "name") == installer_name
+                  ),
+                  None,
+              )
+              if installer is None:
+                  continue
+              candidates.append(
+                  (
+                      str(manifest),
+                      application.attrib.get(android_ns + "theme", "<unset>"),
+                      installer.attrib.get(android_ns + "theme", "<unset>"),
+                  )
+              )
+
+          for path, application_theme, installer_theme in candidates:
+              print(
+                  "Manifest candidate: "
+                  f"{path} | application={application_theme} | installer={installer_theme}"
+              )
+
+          valid = [
+              item
+              for item in candidates
+              if item[1] == expected and item[2] == expected
+          ]
+          if not valid:
+              raise SystemExit(
+                  "Firebase installer theme verification failed: no merged debug manifest "
+                  "assigns Theme.TravelAssistant.Debug to both the application and "
+                  "Firebase InstallActivity."
+              )
+
+          print("Firebase installer AppCompat theme in merged debug manifest: PASS")
+          PY
+
       - name: Compile Kotlin (safe diagnostics only)
         id: compile
         shell: bash
