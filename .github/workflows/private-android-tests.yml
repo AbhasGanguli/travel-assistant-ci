@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Compile, unit tests, Room schema
+    name: Compile, JVM tests, Compose Android test source, Room schema
     runs-on: ubuntu-24.04
     timeout-minutes: 35
 
@@ -273,13 +273,13 @@ jobs:
         run: |
           set +e
           chmod +x ./gradlew
-          ./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin --console=plain > "$RUNNER_TEMP/compile.log" 2>&1
+          ./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --console=plain > "$RUNNER_TEMP/compile.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
-            echo "Kotlin main + unit-test compilation: PASS"
+            echo "Kotlin main + JVM unit-test + Compose Android test-source compilation: PASS"
           else
-            echo "::error::Kotlin main or unit-test compilation failed. Raw build output is suppressed to avoid exposing private source in this public workflow."
+            echo "::error::Kotlin main, JVM unit-test or Android test-source compilation failed. Raw build output is suppressed to avoid exposing private source in this public workflow."
             python3 - "$RUNNER_TEMP/compile.log" <<'PY'
           import re, sys
           lines = open(sys.argv[1], errors="replace").read().splitlines()
