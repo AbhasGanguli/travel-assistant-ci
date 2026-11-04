@@ -1,6 +1,6 @@
 status=FAILED
-source_sha=2c7f868fc41856aca2248129bdbb4a62105e126d
-run_id=41832947921
+source_sha=58839ea3e38b0ef2ffdc9fc23f9666dd108087c1
+run_id=41833224640
 run_attempt=1
 signing_certificate_sha256=NOT_VERIFIED
 apk_sha256=NOT_AVAILABLE
@@ -8,4 +8,4 @@ version_code=NOT_VERIFIED
 firebase_app_distribution_status=NOT_RUN_BUILD_FAILED
 private_release_status=NONE
 private_release_url=NONE
-completed_at_utc=2026-11-04T12:53:04Z
+completed_at_utc=2026-11-04T12:56:09Z
